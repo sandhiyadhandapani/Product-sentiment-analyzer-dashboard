@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+}
+
+@layer utilities {
+  .hero-gradient {
+    background: linear-gradient(135deg, #0a0a4a 0%, #1a1a7e 40%, #2d1b69 70%, #1e1b4b 100%);
+  }
+  .stats-gradient {
+    background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%);
+  }
+  .footer-gradient {
+    background: linear-gradient(135deg, #0f0f3d 0%, #1a1a5c 100%);
+  }
+  .card-hover {
+    transition: all 0.3s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(79, 70, 229, 0.15);
+  }
+  .btn-gradient {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  }
+  .btn-gradient:hover {
+    background: linear-gradient(135deg, #4338ca, #6d28d9);
+  }
+  .donut-chart {
+    width: 100px;
+    height: 100px;
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.stars-purple {
+  background: rgba(139, 92, 246, 0.3);
+  border: 1px solid rgba(139, 92, 246, 0.5);
+}
