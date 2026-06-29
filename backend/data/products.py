@@ -1,0 +1,67 @@
+PRODUCTS = [
+    {
+        "id": "p1",
+        "name": "Apple iPhone 15",
+        "category": "Smartphones",
+        "price": "₹79,999",
+        "image": "https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=800&q=80",
+        "description": "A powerful smartphone with a bright display and excellent camera performance.",
+        "rating": 4.5,
+        "reviews": [
+            {"id": "r1", "username": "Asha", "rating": 5, "comment": "Excellent camera and build quality."},
+            {"id": "r2", "username": "Rohan", "rating": 4, "comment": "Great performance but a bit pricey."},
+        ],
+    },
+    {
+        "id": "p2",
+        "name": "Samsung Galaxy S24 Ultra",
+        "category": "Smartphones",
+        "price": "₹1,29,999",
+        "image": "https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=800&q=80",
+        "description": "Premium phone with a large screen, strong camera setup, and long battery life.",
+        "rating": 4.6,
+        "reviews": [
+            {"id": "r3", "username": "Neha", "rating": 5, "comment": "Amazing display and camera quality."},
+            {"id": "r4", "username": "Vivek", "rating": 3, "comment": "Great features but software feels heavy."},
+        ],
+    },
+    {
+        "id": "p3",
+        "name": "Sony WH-1000XM5 Headphones",
+        "category": "Audio",
+        "price": "₹29,990",
+        "image": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80",
+        "description": "Noise-cancelling headphones with premium sound and comfortable fit.",
+        "rating": 4.7,
+        "reviews": [
+            {"id": "r5", "username": "Mina", "rating": 5, "comment": "Excellent noise cancellation and comfort."},
+            {"id": "r6", "username": "Arjun", "rating": 2, "comment": "Very expensive and the ear pads feel warm."},
+        ],
+    },
+    {
+        "id": "p4",
+        "name": "Mi Smart Band 8",
+        "category": "Wearables",
+        "price": "₹3,499",
+        "image": "https://images.unsplash.com/photo-1546868871-7041f2a55e12?auto=format&fit=crop&w=800&q=80",
+        "description": "A sleek fitness tracker with daily health insights and reliable battery life.",
+        "rating": 4.2,
+        "reviews": [
+            {"id": "r7", "username": "Kavya", "rating": 4, "comment": "Very useful for step tracking and sleep monitoring."},
+            {"id": "r8", "username": "Sanjay", "rating": 3, "comment": "Good value, but the app could be better."},
+        ],
+    },
+    {
+        "id": "p5",
+        "name": "boAt Airdopes 141",
+        "category": "Audio",
+        "price": "₹999",
+        "image": "https://images.unsplash.com/photo-1518444065439-e933c06ce9cd?auto=format&fit=crop&w=800&q=80",
+        "description": "Budget-friendly earbuds with decent sound quality and long battery life.",
+        "rating": 3.9,
+        "reviews": [
+            {"id": "r9", "username": "Priya", "rating": 4, "comment": "Good sound for the price."},
+            {"id": "r10", "username": "Deepak", "rating": 2, "comment": "Battery drops quickly during calls."},
+        ],
+    },
+]

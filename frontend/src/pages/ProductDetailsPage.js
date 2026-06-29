@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DonutChart from '../components/DonutChart';
-import { getProductById } from '../data/products';
+import { getProduct, getProductReviews } from '../services/api';
 
 const MiniTrendLine = () => (
   <svg viewBox="0 0 300 100" className="w-full h-24">
@@ -20,15 +20,46 @@ const MiniTrendLine = () => (
 const ProductDetailsPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const product = getProductById(id);
+  const [product, setProduct] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    const loadProduct = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const productData = await getProduct(id);
+        await getProductReviews(id);
+        setProduct(productData);
+      } catch (err) {
+        setError('Unable to load product details right now.');
+        setProduct(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProduct();
+  }, [id]);
+
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50 font-sans">
+      <Navbar/>
+      <div className="flex items-center justify-center h-64">
+        <p className="text-gray-500">Loading product details...</p>
+      </div>
+      <Footer/>
+    </div>
+  );
 
   if (!product) return (
     <div className="min-h-screen bg-gray-50 font-sans">
       <Navbar/>
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <p className="text-gray-500 mb-4">Product not found.</p>
+          <p className="text-gray-500 mb-4">{error || 'Product not found.'}</p>
           <button onClick={()=>navigate('/search')} className="btn-gradient text-white px-5 py-2 rounded-xl text-sm">Back to Search</button>
         </div>
       </div>
