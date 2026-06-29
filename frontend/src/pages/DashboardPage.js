@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DonutChart from '../components/DonutChart';
-import { ALL_PRODUCTS } from '../data/products';
+import { getProducts } from '../services/api';
 
 const TrendLine = () => (
   <svg viewBox="0 0 300 90" className="w-full h-24">
@@ -76,21 +76,41 @@ const DashboardPage = () => {
   const navigate = useNavigate();
   const [range, setRange] = useState('Last 30 Days');
   const [platformTab, setPlatformTab] = useState('All');
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filtered = platformTab==='All' ? ALL_PRODUCTS : ALL_PRODUCTS.filter(p=>p.platform===platformTab);
+  useEffect(() => {
+    const loadProducts = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const data = await getProducts();
+        setProducts(data);
+      } catch (err) {
+        setError('Unable to load dashboard data right now.');
+        setProducts([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProducts();
+  }, []);
+
+  const filtered = platformTab==='All' ? products : products.filter(p=>p.platform===platformTab);
   const totalReviews = filtered.reduce((s,p)=>s+p.reviews,0);
-  const avgRating = (filtered.reduce((s,p)=>s+p.rating,0)/filtered.length).toFixed(1);
-  const overallPos = Math.round(filtered.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/filtered.length);
-  const overallNeu = Math.round(filtered.reduce((s,p)=>s+p.sentimentBreakdown.neutral,0)/filtered.length);
+  const avgRating = filtered.length ? (filtered.reduce((s,p)=>s+p.rating,0)/filtered.length).toFixed(1) : '0.0';
+  const overallPos = filtered.length ? Math.round(filtered.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/filtered.length) : 0;
+  const overallNeu = filtered.length ? Math.round(filtered.reduce((s,p)=>s+p.sentimentBreakdown.neutral,0)/filtered.length) : 0;
   const overallNeg = 100-overallPos-overallNeu;
 
-  const recentReviews = [
-    {user:'Rahul M.',stars:5,text:'Excellent quality and value for money!',sentiment:'Positive'},
-    {user:'Priya S.',stars:4,text:'Product is okay, expected a bit more for the price.',sentiment:'Neutral'},
-    {user:'Arun K.',stars:2,text:'Not satisfied with the quality. Poor build.',sentiment:'Negative'},
-    {user:'Meera R.',stars:5,text:'Best purchase I have made this year!',sentiment:'Positive'},
-    {user:'Kiran T.',stars:3,text:'Average product. Nothing special but works.',sentiment:'Neutral'},
-  ];
+  const recentReviews = products.flatMap((product) => (product.reviewItems || []).slice(0, 1).map((review) => ({
+    user: review.username || review.user || 'Anonymous',
+    stars: review.rating || 0,
+    text: review.comment || review.text || 'Great feedback',
+    sentiment: review.sentiment || 'Neutral',
+  }))).slice(0, 5);
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -125,6 +145,9 @@ const DashboardPage = () => {
             </button>
           ))}
         </div>
+
+        {error ? <p className="text-sm text-red-500">{error}</p> : null}
+        {loading ? <p className="text-sm text-gray-500">Loading dashboard data...</p> : null}
 
         {/* Stat Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -243,7 +266,7 @@ const DashboardPage = () => {
           <h3 className="text-sm font-bold text-gray-800 mb-5">Platform Comparison</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {['Amazon','Flipkart'].map(plat=>{
-              const pp=ALL_PRODUCTS.filter(p=>p.platform===plat);
+              const pp=products.filter(p=>p.platform===plat);
               const avgR=(pp.reduce((s,p)=>s+p.rating,0)/pp.length).toFixed(1);
               const totalR=pp.reduce((s,p)=>s+p.reviews,0);
               const posP=Math.round(pp.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/pp.length);

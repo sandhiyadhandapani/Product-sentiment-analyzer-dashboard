@@ -1,16 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-
-const MOCK_REVIEWS = [
-  { id: 1, user: 'Rahul M.', rating: 5, date: 'Jun 12, 2024', title: 'Excellent phone!', text: 'The iPhone 15 is an absolute beast. Camera quality is phenomenal and the USB-C switch is a welcome change. Battery lasts all day easily.', sentiment: 'Positive', platform: 'Amazon', helpful: 42 },
-  { id: 2, user: 'Priya S.', rating: 4, date: 'Jun 10, 2024', title: 'Great but overpriced', text: 'Performance is excellent and the camera is top-notch. However, I feel the price point is a bit high for the features offered compared to Android flagships.', sentiment: 'Neutral', platform: 'Amazon', helpful: 28 },
-  { id: 3, user: 'Arun K.', rating: 2, date: 'Jun 8, 2024', title: 'Disappointed with battery', text: 'Expected much better battery life for this price. Barely lasts a full day with moderate use. Also, the charger is not included which is ridiculous at this price.', sentiment: 'Negative', platform: 'Flipkart', helpful: 19 },
-  { id: 4, user: 'Meera R.', rating: 5, date: 'Jun 5, 2024', title: 'Best iPhone yet', text: 'Upgraded from iPhone 12 and the difference is night and day. Dynamic Island is very useful. Build quality is premium as always.', sentiment: 'Positive', platform: 'Amazon', helpful: 35 },
-  { id: 5, user: 'Kiran T.', rating: 4, date: 'Jun 3, 2024', title: 'Good upgrade from older iPhones', text: 'The A16 chip is incredibly fast. Face ID works flawlessly. Wish it had more base storage at this price range. Overall satisfied with the purchase.', sentiment: 'Neutral', platform: 'Flipkart', helpful: 22 },
-  { id: 6, user: 'Divya L.', rating: 1, date: 'May 30, 2024', title: 'Overheating issues', text: 'The phone heats up significantly while gaming or using intensive apps. Customer service was not helpful. Would not recommend at this price.', sentiment: 'Negative', platform: 'Amazon', helpful: 15 },
-];
+import { getProduct, getProductReviews } from '../services/api';
 
 const sentimentConfig = {
   Positive: { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0', emoji: '😊' },
@@ -76,18 +68,42 @@ const ReviewDisplayPage = () => {
   const [sentimentFilter, setSentimentFilter] = useState('All');
   const [sortBy, setSortBy] = useState('recent');
   const [search, setSearch] = useState('');
+  const [reviews, setReviews] = useState([]);
+  const [productName, setProductName] = useState('Product');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const filters = ['All', 'Positive', 'Neutral', 'Negative'];
 
-  const filtered = MOCK_REVIEWS
+  useEffect(() => {
+    const loadReviews = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const productData = await getProduct(id);
+        const reviewData = await getProductReviews(id);
+        setProductName(productData.name);
+        setReviews(reviewData);
+      } catch (err) {
+        setError('Unable to load reviews right now.');
+        setReviews([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadReviews();
+  }, [id]);
+
+  const filtered = reviews
     .filter((r) => sentimentFilter === 'All' || r.sentiment === sentimentFilter)
     .filter((r) => search === '' || r.text.toLowerCase().includes(search.toLowerCase()) || r.title.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => sortBy === 'rating' ? b.rating - a.rating : b.id - a.id);
+    .sort((a, b) => sortBy === 'rating' ? b.rating - a.rating : Number(b.id.replace(/\D/g, '')) - Number(a.id.replace(/\D/g, '')));
 
   const counts = {
-    Positive: MOCK_REVIEWS.filter((r) => r.sentiment === 'Positive').length,
-    Neutral: MOCK_REVIEWS.filter((r) => r.sentiment === 'Neutral').length,
-    Negative: MOCK_REVIEWS.filter((r) => r.sentiment === 'Negative').length,
+    Positive: reviews.filter((r) => r.sentiment === 'Positive').length,
+    Neutral: reviews.filter((r) => r.sentiment === 'Neutral').length,
+    Negative: reviews.filter((r) => r.sentiment === 'Negative').length,
   };
 
   return (
@@ -107,7 +123,7 @@ const ReviewDisplayPage = () => {
             Back to Product
           </button>
           <h1 className="text-white text-2xl font-extrabold mb-1">Customer Reviews</h1>
-          <p className="text-gray-300 text-sm">Apple iPhone 15 · {MOCK_REVIEWS.length} reviews</p>
+          <p className="text-gray-300 text-sm">{productName} · {reviews.length} reviews</p>
         </div>
       </div>
 
@@ -172,6 +188,9 @@ const ReviewDisplayPage = () => {
             </select>
           </div>
         </div>
+
+        {error ? <p className="text-sm text-red-500 mb-4">{error}</p> : null}
+        {loading ? <p className="text-sm text-gray-500 mb-4">Loading reviews...</p> : null}
 
         {/* Count */}
         <p className="text-xs text-gray-500 mb-4">{filtered.length} review(s) shown</p>

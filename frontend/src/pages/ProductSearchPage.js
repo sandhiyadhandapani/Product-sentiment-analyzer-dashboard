@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import { ALL_PRODUCTS } from '../data/products';
+import { searchProducts } from '../services/api';
 
 const sentimentColors = {
   Positive: { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0' },
@@ -45,25 +45,32 @@ const ProductCard = ({ product, onClick }) => {
 const ProductSearchPage = () => {
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState(searchParams.get('q') || '');
-  const [results, setResults] = useState(ALL_PRODUCTS);
-  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [filter, setFilter] = useState('All');
   const [platform, setPlatform] = useState('All');
   const navigate = useNavigate();
 
-  const doSearch = (q) => {
+  const doSearch = async (q) => {
     setLoading(true);
-    setTimeout(() => {
-      setResults(q ? ALL_PRODUCTS.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) || p.category.toLowerCase().includes(q.toLowerCase())) : ALL_PRODUCTS);
+    setError('');
+    try {
+      const data = await searchProducts(q);
+      setResults(data);
+    } catch (err) {
+      setResults([]);
+      setError('Unable to load products right now.');
+    } finally {
       setLoading(false);
-    }, 400);
+    }
   };
 
   useEffect(() => { doSearch(query); }, []);
 
   const handleSearch = (e) => { e.preventDefault(); doSearch(query); };
 
-  const filtered = results.filter(p => {
+  const filtered = results.filter((p) => {
     const ms = filter === 'All' || p.sentiment === filter;
     const mp = platform === 'All' || p.platform === platform;
     return ms && mp;
@@ -109,6 +116,7 @@ const ProductSearchPage = () => {
           </div>
         </div>
 
+        {error ? <p className="text-sm text-red-500 mb-4">{error}</p> : null}
         <p className="text-sm text-gray-500 mb-4">{loading?'Searching...':`${filtered.length} product(s) found`}{query&&` for "${query}"`}</p>
 
         {loading ? (
