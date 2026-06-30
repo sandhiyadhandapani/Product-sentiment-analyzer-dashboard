@@ -11,6 +11,15 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return {
+        "status": "Backend Running",
+        "message": "Product Sentiment Analyzer API",
+    }
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -23,6 +32,6 @@ app.include_router(products_router)
 app.include_router(sentiment_router)
 
 
-@app.get("/api/health")
+@app.get("/api/health", include_in_schema=False)
 async def health_check():
     return {"status": "ok", "message": "Backend is running"}
