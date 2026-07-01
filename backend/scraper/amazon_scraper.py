@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote
+import os
+import re
+from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -14,15 +16,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 PAGE_TIMEOUT_SECONDS = 20
-ELEMENT_TIMEOUT_SECONDS = 10
+ELEMENT_TIMEOUT_SECONDS = 15
 MAX_PAGES = 2
 
 logger = logging.getLogger(__name__)
 
 
-def _build_driver() -> webdriver.Chrome | None:
+def _build_driver(visible: bool = True) -> webdriver.Chrome | None:
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
+    if not visible or os.getenv("SELENIUM_HEADLESS") == "1":
+        chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -44,8 +47,11 @@ def _build_driver() -> webdriver.Chrome | None:
             return None
 
 
-def _wait_for_page(driver: webdriver.Chrome) -> None:
-    WebDriverWait(driver, ELEMENT_TIMEOUT_SECONDS).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+def _wait_for_page(driver: webdriver.Chrome, selector: str | None = None) -> None:
+    if selector:
+        WebDriverWait(driver, ELEMENT_TIMEOUT_SECONDS).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+    else:
+        WebDriverWait(driver, ELEMENT_TIMEOUT_SECONDS).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
 
 def _get_text_from_elements(elements) -> str:
@@ -55,125 +61,316 @@ def _get_text_from_elements(elements) -> str:
     return " ".join(text.split())
 
 
+def _clean_review_text(raw_text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (raw_text or "")).strip()
+    return cleaned if len(cleaned) >= 10 else ""
+
+
+def _normalize_rating(raw_value: str | int | float | None) -> int:
+    if raw_value is None:
+        return 0
+    if isinstance(raw_value, (int, float)):
+        return int(round(float(raw_value)))
+
+    text = str(raw_value)
+    match = re.search(r"(\d(?:\.\d)?)", text)
+    if not match:
+        return 0
+    rating = float(match.group(1))
+    if rating > 5:
+        rating = round(rating / 10, 1)
+    return int(round(rating))
+
+
+def _looks_like_blocked_page(soup: BeautifulSoup) -> bool:
+    text = " ".join(soup.stripped_strings).lower()
+    blocked_markers = ["captcha", "verify you are human", "robot", "access denied", "try again later"]
+    return any(marker in text for marker in blocked_markers)
+
+
+def _looks_like_valid_product_title(text: str | None) -> bool:
+    if not text:
+        return False
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if len(cleaned) < 3 or any(token in lowered for token in ["search results", "results", "amazon", "flipkart", "logo", "sign in", "signin", "cart"]):
+        return False
+    return True
+
+
+def _normalize_image_url(raw_value: str | None, base_url: str = "https://www.amazon.in") -> str | None:
+    if not raw_value:
+        return None
+    value = str(raw_value).strip()
+    if not value or value.startswith("data:image"):
+        return None
+    if value.startswith("//"):
+        value = f"https:{value}"
+    elif value.startswith("/"):
+        value = urljoin(base_url, value)
+    lowered = value.lower()
+    if any(marker in lowered for marker in ["amazon_logo", "flipkart-logo", "logo", "sprite", "icon", "static"]) and "product" not in lowered:
+        return None
+    return value if lowered.startswith(("http://", "https://")) else None
+
+
+def _extract_amazon_card_metadata(soup: BeautifulSoup) -> dict:
+    cards = soup.select("div[data-component-type='s-search-result'], div.s-result-item, div[data-asin]")
+    for card in cards:
+        title = None
+        for selector in ["h2 a", "h2", "h3", "a span", "a"]:
+            for element in card.select(selector):
+                text = element.get_text(" ", strip=True)
+                if _looks_like_valid_product_title(text):
+                    title = re.sub(r"\s+", " ", text).strip()
+                    break
+            if title:
+                break
+
+        if not title:
+            continue
+
+        image = None
+        for element in card.select("img[src], img[data-src], img[data-image]"):
+            raw_value = element.get("src") or element.get("data-src") or element.get("data-image")
+            normalized = _normalize_image_url(raw_value)
+            if normalized:
+                image = normalized
+                break
+
+        price = None
+        for selector in [".a-price .a-offscreen", ".a-price", "span.a-price-whole"]:
+            element = card.select_one(selector)
+            if element:
+                text = element.get_text(" ", strip=True)
+                if text:
+                    price = text
+                    break
+
+        rating = None
+        for selector in [".a-icon-alt", "i[data-hook='average-star-rating'] span", "span.a-icon-alt"]:
+            element = card.select_one(selector)
+            if element:
+                text = element.get_text(" ", strip=True)
+                match = re.search(r"(\d+(?:\.\d+)?)", text)
+                if match:
+                    rating_value = float(match.group(1))
+                    if rating_value > 5:
+                        rating_value = round(rating_value / 10, 1)
+                    rating = rating_value
+                    break
+
+        return {
+            "product_name": title,
+            "product_image": image,
+            "product_price": price,
+            "product_rating": rating,
+        }
+
+    return {}
+
+
+def extract_amazon_product_metadata(html: str) -> dict:
+    soup = BeautifulSoup(html, "html.parser")
+    card_metadata = _extract_amazon_card_metadata(soup)
+
+    product_name = card_metadata.get("product_name")
+    product_image = card_metadata.get("product_image")
+    product_price = card_metadata.get("product_price")
+    product_rating = card_metadata.get("product_rating")
+
+    if not product_name:
+        for selector in ["#productTitle", "h1", "meta[property='og:title']"]:
+            element = soup.select_one(selector)
+            if element:
+                value = element.get("content") if element.name == "meta" else element.get_text(" ", strip=True)
+                if _looks_like_valid_product_title(value):
+                    product_name = re.sub(r"\s+", " ", value).strip()
+                    break
+
+    if not product_image:
+        for selector in ["#landingImage", "meta[property='og:image']", "img[src]"]:
+            element = soup.select_one(selector)
+            if element:
+                value = element.get("content") if element.name == "meta" else element.get("src")
+                normalized = _normalize_image_url(value)
+                if normalized:
+                    product_image = normalized
+                    break
+
+    if not product_price:
+        for selector in [".a-price .a-offscreen", ".a-price", "span.a-price-whole"]:
+            element = soup.select_one(selector)
+            if element:
+                value = element.get_text(" ", strip=True)
+                if value:
+                    product_price = value
+                    break
+
+    if product_rating is None:
+        for selector in [".a-icon-alt", "i[data-hook='average-star-rating'] span", "span.a-icon-alt"]:
+            element = soup.select_one(selector)
+            if element:
+                text = element.get_text(" ", strip=True)
+                match = re.search(r"(\d+(?:\.\d+)?)", text)
+                if match:
+                    rating = float(match.group(1))
+                    if rating > 5:
+                        rating = round(rating / 10, 1)
+                    product_rating = rating
+                    break
+
+    total_ratings = None
+    for selector in ["#acrCustomerReviewText", "span[id*='rating']", "a[href*='reviews']"]:
+        element = soup.select_one(selector)
+        if element:
+            text = element.get_text(" ", strip=True)
+            match = re.search(r"(\d[\d,]*)", text.replace(",", ""))
+            if match:
+                total_ratings = int(match.group(1))
+                break
+
+    return {
+        "product_name": product_name,
+        "product_image": product_image,
+        "product_price": product_price,
+        "product_rating": product_rating,
+        "total_ratings": total_ratings,
+    }
+
+
 def _extract_amazon_review_text(card) -> str:
-    selectors = [
-        "span[data-hook='review-body']",
-        "span.review-text-content",
-        "div.review-text",
-        "div.a-expander-content",
-        "p",
-    ]
+    selectors = ["span[data-hook='review-body']", "span.review-text-content", "div[data-hook='review-collapsed']", "div.review-text", "div.a-expander-content", "div.a-row.review-data", "p"]
     for selector in selectors:
         text = _get_text_from_elements(card.select(selector))
         if text and len(text) > 20:
-            return text
-
-    fallback_text = _get_text_from_elements([card])
-    return fallback_text if fallback_text and len(fallback_text) > 20 else ""
-
-
-def _extract_amazon_review_rating(card) -> str:
-    selectors = [
-        "i[data-hook='review-star-rating']",
-        "span.a-icon-alt",
-        "span[data-hook='review-star-rating']",
-    ]
-    for selector in selectors:
-        text = _get_text_from_elements(card.select(selector))
-        if text:
-            return text
+            return _clean_review_text(text)
     return ""
 
 
-def scrape_amazon_reviews(product_name: str, max_reviews: int = 10) -> list[dict]:
+def _extract_amazon_review_rating(card) -> int:
+    selectors = ["i[data-hook='review-star-rating'] span", "i[data-hook='cmps-review-star-rating'] span", "span.a-icon-alt", "span[data-hook='review-star-rating']"]
+    for selector in selectors:
+        text = _get_text_from_elements(card.select(selector))
+        rating = _normalize_rating(text)
+        if rating:
+            return rating
+    return 0
+
+
+def scrape_amazon_reviews(product_name: str, max_reviews: int = 10, return_metadata: bool = False) -> list[dict] | dict:
     reviews: list[dict] = []
+    meta: dict[str, object] = {
+        "platform": "amazon",
+        "scraper": "scrape_amazon_reviews",
+        "search_url": "",
+        "product_url": "",
+        "review_url": "",
+        "page_title": "",
+        "html_length": 0,
+        "review_blocks_detected": 0,
+        "extracted_reviews_count": 0,
+        "blocked": False,
+        "message": "",
+    }
     driver: webdriver.Chrome | None = None
 
     try:
-        driver = _build_driver()
+        driver = _build_driver(visible=True)
         if driver is None:
-            return []
+            meta.update({"blocked": True, "message": "No real reviews found or scraping blocked"})
+            return {"reviews": [], "meta": meta} if return_metadata else []
 
         driver.set_page_load_timeout(PAGE_TIMEOUT_SECONDS)
         driver.set_script_timeout(PAGE_TIMEOUT_SECONDS)
 
-        search_url = f"https://www.amazon.in/s?k={quote(product_name)}"
+        search_query = (product_name or "").strip()
+        print(f"[Amazon] product search query: {search_query}")
+        search_url = f"https://www.amazon.in/s?k={quote(search_query)}"
+        meta["search_url"] = search_url
         print(f"[Amazon] search URL: {search_url}")
-        try:
-            driver.get(search_url)
-            _wait_for_page(driver)
-        except (TimeoutException, Exception):
-            return []
+        driver.get(search_url)
+        _wait_for_page(driver)
+        meta["page_title"] = driver.title
+        meta["html_length"] = len(driver.page_source)
+
+        metadata = extract_amazon_product_metadata(driver.page_source)
+        meta.update({k: v for k, v in metadata.items() if v is not None})
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        product_links = [
-            link.get("href")
-            for link in soup.select("a[href]")
-            if link.get("href") and ("/dp/" in link.get("href") or "/gp/product/" in link.get("href"))
-        ]
+        if _looks_like_blocked_page(soup):
+            meta.update({"blocked": True, "message": "No real reviews found or scraping blocked"})
+            return {"reviews": [], "meta": meta} if return_metadata else []
 
-        product_url = None
-        if product_links:
-            first_link = product_links[0]
-            if not first_link.startswith("http"):
-                first_link = f"https://www.amazon.in{first_link}"
-            product_url = first_link
-            print(f"[Amazon] product URL: {product_url}")
+        product_link = None
+        for selector in ["a.a-link-normal.s-no-outline", "h2 a", "[data-component-type='s-search-result'] h2 a"]:
             try:
-                driver.get(product_url)
-                _wait_for_page(driver)
+                element = WebDriverWait(driver, ELEMENT_TIMEOUT_SECONDS).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                href = element.get_attribute("href") or ""
+                if href:
+                    product_link = href
+                    break
             except Exception:
-                return []
+                continue
 
-        if not product_url:
-            return []
+        if product_link:
+            if not product_link.startswith("http"):
+                product_link = f"https://www.amazon.in{product_link}"
+            meta["product_url"] = product_link
+            print(f"[Amazon] product page URL: {product_link}")
+            driver.get(product_link)
+            _wait_for_page(driver, "body")
+            meta["page_title"] = driver.title
+            meta["html_length"] = len(driver.page_source)
 
         review_link = None
-        candidates = [
-            element.get_attribute("href") or ""
-            for element in driver.find_elements(By.TAG_NAME, "a")
-            if (element.get_attribute("href") or "").strip()
-        ]
-        for href in candidates:
-            if "product-reviews" in href or "customer-reviews" in href or "/review/" in href:
-                review_link = href
-                break
+        for selector in ["a[data-hook='see-all-reviews-link-foot']", "a[href*='product-reviews']"]:
+            try:
+                review_element = WebDriverWait(driver, ELEMENT_TIMEOUT_SECONDS).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                href = review_element.get_attribute("href") or ""
+                if href:
+                    review_link = href
+                    break
+            except Exception:
+                continue
 
         if review_link:
             if not review_link.startswith("http"):
                 review_link = f"https://www.amazon.in{review_link}"
+            meta["review_url"] = review_link
             print(f"[Amazon] review page URL: {review_link}")
-            try:
-                driver.get(review_link)
-                _wait_for_page(driver)
-            except (TimeoutException, WebDriverException, Exception):
-                pass
+            driver.get(review_link)
+            _wait_for_page(driver, "body")
+            meta["page_title"] = driver.title
+            meta["html_length"] = len(driver.page_source)
 
         for _ in range(MAX_PAGES):
             soup = BeautifulSoup(driver.page_source, "html.parser")
-            review_cards = (
-                soup.select("div[data-hook='review']")
-                or soup.select("div.review")
-                or soup.select("div.a-section.review")
-                or soup.select("div.a-row.review")
-            )
-            print(f"[Amazon] review elements found: {len(review_cards)}")
+            if _looks_like_blocked_page(soup):
+                meta.update({"blocked": True, "message": "No real reviews found or scraping blocked"})
+                return {"reviews": [], "meta": meta} if return_metadata else []
+
+            review_cards = soup.select("div[data-hook='review']")
+            meta["review_blocks_detected"] = len(review_cards)
+            print(f"[Amazon] review blocks detected: {len(review_cards)}")
 
             for card in review_cards[:max_reviews]:
                 review_text = _extract_amazon_review_text(card)
-                rating_text = _extract_amazon_review_rating(card)
+                rating = _extract_amazon_review_rating(card)
                 if review_text:
-                    reviews.append({"review": review_text, "rating": rating_text or "5 stars"})
-                if len(reviews) >= max_reviews:
-                    break
+                    reviews.append({"review_text": review_text, "rating": rating or 0, "platform": "amazon"})
 
-            if len(reviews) >= max_reviews:
+            meta["extracted_reviews_count"] = len(reviews)
+            print(f"[Amazon] real reviews extracted: {len(reviews)}")
+            if reviews:
                 break
 
             next_page = None
             for link in soup.select("a[href]"):
                 href = link.get("href") or ""
-                if "pageNumber" in href and "review" in href:
+                if "pageNumber" in href and "review" in href.lower():
                     next_page = href
                     break
 
@@ -182,16 +379,25 @@ def scrape_amazon_reviews(product_name: str, max_reviews: int = 10) -> list[dict
 
             if not next_page.startswith("http"):
                 next_page = f"https://www.amazon.in{next_page}"
-            try:
-                driver.get(next_page)
-                _wait_for_page(driver)
-            except Exception:
-                break
-    except Exception as exc:
+            driver.get(next_page)
+            _wait_for_page(driver, "body")
+            meta["page_title"] = driver.title
+            meta["html_length"] = len(driver.page_source)
+    except (TimeoutException, WebDriverException, Exception) as exc:
         logger.warning("Amazon scraping failed: %s", exc)
-        return []
+        meta.update({"blocked": True, "message": "No real reviews found or scraping blocked"})
+        return {"reviews": [], "meta": meta} if return_metadata else []
     finally:
         if driver:
             driver.quit()
 
-    return reviews[:max_reviews]
+    if not reviews:
+        meta.update({"blocked": True, "message": "No real reviews found or scraping blocked"})
+
+    return {"reviews": reviews[:max_reviews], "meta": meta} if return_metadata else reviews[:max_reviews]
+
+
+if __name__ == "__main__":
+    reviews = scrape_amazon_reviews("iphone 15")
+    print("Count:", len(reviews))
+    print(reviews[:3])

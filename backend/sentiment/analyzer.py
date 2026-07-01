@@ -44,37 +44,112 @@ def analyze_sentiment(text: str) -> dict:
     return {"sentiment": "Neutral", "score": 0.0}
 
 
-def analyze_product(product_name: str) -> dict:
+def _log_scraper_metadata(platform: str, scraper_name: str, metadata: dict | None) -> None:
+    if not metadata:
+        logger.info("Analyze selected platform: %s", platform)
+        logger.info("Analyze scraper function called: %s", scraper_name)
+        logger.info("Analyze review blocks detected: 0")
+        logger.info("Analyze extracted reviews count: 0")
+        return
+
+    logger.info("Analyze selected platform: %s", platform)
+    logger.info("Analyze scraper function called: %s", scraper_name)
+    logger.info("Analyze search URL: %s", metadata.get("search_url") or "")
+    logger.info("Analyze product URL: %s", metadata.get("product_url") or "")
+    logger.info("Analyze review URL: %s", metadata.get("review_url") or "")
+    logger.info("Analyze page title: %s", metadata.get("page_title") or "")
+    logger.info("Analyze HTML length: %s", metadata.get("html_length") or 0)
+    logger.info("Analyze review blocks detected: %s", metadata.get("review_blocks_detected") or 0)
+    logger.info("Analyze extracted reviews count: %s", metadata.get("extracted_reviews_count") or 0)
+
+
+def analyze_product(product_name: str, platform: str | None = None) -> dict:
     product_query = (product_name or "").strip()
     if not product_query:
         raise ValueError("Product name cannot be empty")
 
-    amazon_reviews: list[dict] = []
-    flipkart_reviews: list[dict] = []
+    requested_platform = (platform or "mixed").strip().lower()
+    if requested_platform not in {"amazon", "flipkart", "mixed"}:
+        raise ValueError("Platform must be one of: amazon, flipkart, mixed")
 
-    try:
-        amazon_reviews = scrape_amazon_reviews(product_query, max_reviews=10)
-    except Exception as exc:
-        logger.warning("Amazon review scraping failed: %s", exc)
+    amazon_result = {"reviews": [], "meta": {}}
+    flipkart_result = {"reviews": [], "meta": {}}
 
-    try:
-        flipkart_reviews = scrape_flipkart_reviews(product_query, max_reviews=10)
-    except Exception as exc:
-        logger.warning("Flipkart review scraping failed: %s", exc)
+    if requested_platform in {"amazon", "mixed"}:
+        try:
+            amazon_result = scrape_amazon_reviews(product_query, max_reviews=10, return_metadata=True)
+        except Exception as exc:
+            logger.warning("Amazon review scraping failed: %s", exc)
+
+    if requested_platform in {"flipkart", "mixed"}:
+        try:
+            flipkart_result = scrape_flipkart_reviews(product_query, max_reviews=10, return_metadata=True)
+        except Exception as exc:
+            logger.warning("Flipkart review scraping failed: %s", exc)
+
+    amazon_reviews = amazon_result.get("reviews", []) if isinstance(amazon_result, dict) else []
+    amazon_meta = amazon_result.get("meta", {}) if isinstance(amazon_result, dict) else {}
+    flipkart_reviews = flipkart_result.get("reviews", []) if isinstance(flipkart_result, dict) else []
+    flipkart_meta = flipkart_result.get("meta", {}) if isinstance(flipkart_result, dict) else {}
+
+    selected_platform = requested_platform
+    selected_reviews: list[dict] = []
+    selected_meta: dict | None = None
+    product_metadata = {
+        "product_name": product_query,
+        "product_image": None,
+        "product_price": None,
+        "product_rating": None,
+        "total_ratings": None,
+    }
+
+    if requested_platform == "amazon":
+        selected_reviews = amazon_reviews
+        selected_meta = amazon_meta if amazon_meta else None
+        product_metadata.update({k: v for k, v in amazon_meta.items() if k in product_metadata and v is not None})
+    elif requested_platform == "flipkart":
+        selected_reviews = flipkart_reviews
+        selected_meta = flipkart_meta if flipkart_meta else None
+        product_metadata.update({k: v for k, v in flipkart_meta.items() if k in product_metadata and v is not None})
+    else:
+        if amazon_reviews:
+            selected_reviews = amazon_reviews + flipkart_reviews
+            selected_meta = amazon_meta or flipkart_meta or None
+            product_metadata.update({k: v for k, v in amazon_meta.items() if k in product_metadata and v is not None})
+        elif flipkart_reviews:
+            selected_reviews = flipkart_reviews
+            selected_meta = flipkart_meta or None
+            product_metadata.update({k: v for k, v in flipkart_meta.items() if k in product_metadata and v is not None})
+        else:
+            selected_reviews = []
+            selected_meta = amazon_meta or flipkart_meta or None
+            product_metadata.update({k: v for k, v in (amazon_meta or {}).items() if k in product_metadata and v is not None})
+            product_metadata.update({k: v for k, v in (flipkart_meta or {}).items() if k in product_metadata and v is not None})
+
+    if amazon_meta:
+        _log_scraper_metadata("amazon", "scrape_amazon_reviews", amazon_meta)
+    if flipkart_meta:
+        _log_scraper_metadata("flipkart", "scrape_flipkart_reviews", flipkart_meta)
+
+    logger.info("Analyze selected platform: %s", selected_platform)
 
     analyzed_reviews: list[dict] = []
-    for review_entry in amazon_reviews + flipkart_reviews:
-        review_text = review_entry.get("review", "") or ""
+    for review_entry in selected_reviews:
+        review_text = review_entry.get("review_text") or review_entry.get("review", "") or ""
         cleaned_review = clean_text(review_text)
         if not cleaned_review:
             continue
 
         result = analyze_sentiment(cleaned_review)
+        rating = review_entry.get("rating") or review_entry.get("review_rating") or 0
         analyzed_reviews.append(
             {
-                "review": cleaned_review,
+                "review_text": cleaned_review,
+                "rating": int(rating) if isinstance(rating, (int, float)) else 0,
+                "review_rating": int(rating) if isinstance(rating, (int, float)) else 0,
                 "sentiment": result["sentiment"],
-                "score": result["score"],
+                "platform": selected_platform,
+                "score": result.get("score", 0.0),
             }
         )
 
@@ -82,17 +157,40 @@ def analyze_product(product_name: str) -> dict:
     negative = sum(1 for item in analyzed_reviews if item["sentiment"] == "Negative")
     neutral = sum(1 for item in analyzed_reviews if item["sentiment"] == "Neutral")
 
-    if analyzed_reviews:
-        message = "Analysis completed successfully."
+    block_message = "Unable to fetch real reviews. Site may be blocking scraping."
+    product_name = product_metadata.get("product_name")
+    product_image = product_metadata.get("product_image")
+    product_price = product_metadata.get("product_price")
+    has_real_product = bool(product_name and (product_price or product_image))
+
+    if selected_meta and selected_meta.get("blocked") and has_real_product:
+        message = selected_meta.get("message") or "Product details were found, but live reviews were blocked."
+    elif selected_meta and selected_meta.get("blocked"):
+        message = selected_meta.get("message") or block_message
+    elif has_real_product:
+        message = "Analysis completed successfully." if analyzed_reviews else "Product details were found, but no reviews were extracted."
     else:
-        message = "No real reviews found."
+        message = block_message
 
     return {
+        "success": has_real_product,
         "product": product_query,
+        "product_name": product_name,
+        "product_image": product_image,
+        "product_price": product_price,
+        "product_rating": product_metadata.get("product_rating"),
+        "total_ratings": product_metadata.get("total_ratings"),
+        "platform": selected_platform,
         "total_reviews": len(analyzed_reviews),
         "positive": positive,
         "negative": negative,
         "neutral": neutral,
         "reviews": analyzed_reviews,
+        "summary": {
+            "positive": positive,
+            "negative": negative,
+            "neutral": neutral,
+            "total_reviews": len(analyzed_reviews),
+        },
         "message": message,
     }

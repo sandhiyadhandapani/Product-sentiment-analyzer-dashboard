@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DonutChart from '../components/DonutChart';
-import { getProducts } from '../services/api';
+import { getStoredAnalyzedProduct } from '../services/api';
 
 const TrendLine = () => (
   <svg viewBox="0 0 300 90" className="w-full h-24">
@@ -81,21 +81,17 @@ const DashboardPage = () => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const loadProducts = async () => {
-      setLoading(true);
+    const stored = getStoredAnalyzedProduct();
+    if (stored) {
+      setProducts([stored]);
       setError('');
-      try {
-        const data = await getProducts();
-        setProducts(data);
-      } catch (err) {
-        setError('Unable to load dashboard data right now.');
-        setProducts([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+      setLoading(false);
+      return;
+    }
 
-    loadProducts();
+    setLoading(false);
+    setProducts([]);
+    setError('No analyzed product yet. Search a product to populate the dashboard.');
   }, []);
 
   const filtered = platformTab==='All' ? products : products.filter(p=>p.platform===platformTab);
@@ -229,7 +225,7 @@ const DashboardPage = () => {
                     const sColor={Positive:'#16a34a',Neutral:'#d97706',Negative:'#dc2626'}[p.sentiment];
                     const sBg={Positive:'#f0fdf4',Neutral:'#fffbeb',Negative:'#fef2f2'}[p.sentiment];
                     return (
-                      <tr key={p.id} className="border-t border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={()=>navigate(`/product/${p.id}`)}>
+                      <tr key={p.id} className="border-t border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={()=>navigate('/product-details', { state: { product: p } })}>
                         <td className="px-5 py-3">
                           <div className="text-xs font-semibold text-gray-900 max-w-[180px] truncate">{p.name}</div>
                           <div className="text-xs text-gray-400">{p.category}</div>

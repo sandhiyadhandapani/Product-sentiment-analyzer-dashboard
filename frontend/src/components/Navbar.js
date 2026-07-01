@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 const Navbar = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const navLinks = [
     { label: 'Home', path: '/' },
@@ -15,7 +16,7 @@ const Navbar = () => {
   ];
 
   return (
-    <nav className="bg-white shadow-sm sticky top-0 z-50">
+    <nav className="bg-white shadow-sm sticky top-0 z-[60] pointer-events-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
@@ -48,14 +49,17 @@ const Navbar = () => {
             ))}
           </div>
 
-          {/* Login Button */}
-          <div className="hidden md:flex">
-            <button className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
+          {/* Auth Buttons */}
+          <div className="hidden md:flex items-center gap-2">
+            <button type="button" onClick={() => navigate('/about')} className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                 <circle cx="12" cy="7" r="4" />
               </svg>
               Login
+            </button>
+            <button type="button" onClick={() => navigate('/contact')} className="border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:border-indigo-300 hover:text-indigo-600 transition-colors">
+              Register
             </button>
           </div>
 
@@ -85,8 +89,11 @@ const Navbar = () => {
               {link.label}
             </Link>
           ))}
-          <button className="w-full mt-2 bg-gray-900 text-white py-2 rounded-lg text-sm font-medium">
+          <button type="button" onClick={() => navigate('/about')} className="w-full mt-2 bg-gray-900 text-white py-2 rounded-lg text-sm font-medium">
             Login
+          </button>
+          <button type="button" onClick={() => navigate('/contact')} className="w-full border border-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium">
+            Register
           </button>
         </div>
       )}

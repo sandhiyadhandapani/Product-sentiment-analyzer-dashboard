@@ -4,4 +4,4 @@ pydantic
 beautifulsoup4
 selenium
 webdriver-manager
-vaderSentimentcdccd
+vaderSentiment
