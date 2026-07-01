@@ -1,22 +1,20 @@
 import React from 'react';
 
-const DonutChart = ({ size = 110, strokeWidth = 16 }) => {
+const DonutChart = ({ size = 110, strokeWidth = 16, segments = [] }) => {
   const r = (size - strokeWidth) / 2;
   const cx = size / 2;
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
 
-  const segments = [
-    { value: 65, color: '#22c55e', label: 'Positive' },
-    { value: 20, color: '#f59e0b', label: 'Neutral' },
-    { value: 15, color: '#ef4444', label: 'Negative' },
+  const chartSegments = segments.length ? segments : [
+    { value: 100, color: '#22c55e' },
   ];
 
   let cumulative = 0;
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="rotate-[-90deg]">
-      {segments.map((seg, i) => {
+      {chartSegments.map((seg, i) => {
         const offset = circumference * (1 - cumulative / 100);
         const dash = (seg.value / 100) * circumference;
         cumulative += seg.value;

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from data.products import PRODUCTS
 from schemas.product_schema import Product
+from sentiment.analyzer import analyze_product
 
 router = APIRouter(prefix="/api", tags=["products"])
 
@@ -43,4 +44,24 @@ async def get_product_reviews(product_id: str):
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    return {"product_id": product_id, "reviews": product["reviews"]}
+    analysis = analyze_product(product["name"], platform="mixed")
+    review_items = []
+    for index, review in enumerate(analysis.get("reviews", []), start=1):
+        review_items.append(
+            {
+                "id": f"{product_id}-{index}",
+                "username": "Customer",
+                "rating": review.get("rating", 0),
+                "comment": review.get("review_text", ""),
+                "sentiment": review.get("sentiment", "Neutral"),
+            }
+        )
+
+    return {
+        "product_id": product_id,
+        "product_name": product["name"],
+        "platform": analysis.get("platform", "mixed"),
+        "reviews": review_items,
+        "summary": analysis.get("summary", {"positive": 0, "negative": 0, "neutral": 0, "total_reviews": 0}),
+        "message": analysis.get("message"),
+    }

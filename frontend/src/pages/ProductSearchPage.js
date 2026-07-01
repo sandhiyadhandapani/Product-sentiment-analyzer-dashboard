@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import { searchProducts } from '../services/api';
+import { saveAnalyzedProduct, searchProducts } from '../services/api';
 
 const sentimentColors = {
   Positive: { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0' },
@@ -13,7 +13,7 @@ const sentimentColors = {
 const ProductCard = ({ product, onClick }) => {
   const s = sentimentColors[product.sentiment];
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer card-hover" onClick={() => onClick(product.id)}>
+    <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer card-hover" onClick={() => onClick(product)}>
       <div className="w-full h-32 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg flex items-center justify-center mb-4">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="1.5">
           <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
@@ -46,35 +46,42 @@ const ProductSearchPage = () => {
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState(searchParams.get('q') || '');
   const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [filter, setFilter] = useState('All');
-  const [platform, setPlatform] = useState('All');
+  const [platform, setPlatform] = useState('mixed');
   const navigate = useNavigate();
 
   const doSearch = async (q) => {
+    if (!q || !q.trim() || loading) return;
+
     setLoading(true);
     setError('');
+    setMessage('');
     try {
-      const data = await searchProducts(q);
-      setResults(data);
+      const { products, message: responseMessage } = await searchProducts(q, platform);
+      setResults(products);
+      if (products.length) {
+        saveAnalyzedProduct(products[0]);
+      }
+      setMessage(responseMessage || '');
+      setError(products.length ? '' : (responseMessage || 'Unable to load products right now.'));
     } catch (err) {
       setResults([]);
+      setMessage('');
       setError('Unable to load products right now.');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { doSearch(query); }, []);
+  const handleSearch = (e) => {
+    e.preventDefault();
+    doSearch(query);
+  };
 
-  const handleSearch = (e) => { e.preventDefault(); doSearch(query); };
-
-  const filtered = results.filter((p) => {
-    const ms = filter === 'All' || p.sentiment === filter;
-    const mp = platform === 'All' || p.platform === platform;
-    return ms && mp;
-  });
+  const filtered = results.filter((p) => filter === 'All' || p.sentiment === filter);
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -88,7 +95,7 @@ const ProductSearchPage = () => {
               <input type="text" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search for a product (e.g: iPhone 15, Boat Headphones...)"
                 className="w-full pl-10 pr-4 py-3 bg-white text-gray-800 rounded-xl text-sm focus:outline-none"/>
             </div>
-            <button type="submit" className="btn-gradient text-white px-5 py-3 rounded-xl font-semibold text-sm">Analyze Product</button>
+            <button type="submit" disabled={loading || !query.trim()} className="btn-gradient text-white px-5 py-3 rounded-xl font-semibold text-sm disabled:opacity-60 disabled:cursor-not-allowed">{loading ? 'Analyzing...' : 'Analyze Product'}</button>
           </form>
         </div>
       </div>
@@ -98,10 +105,14 @@ const ProductSearchPage = () => {
         <div className="flex flex-wrap gap-4 mb-6">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-gray-600">Platform:</span>
-            {['All','Amazon','Flipkart'].map(p=>(
-              <button key={p} onClick={()=>setPlatform(p)}
-                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${platform===p?'bg-indigo-600 text-white':'bg-white text-gray-600 border border-gray-200 hover:border-indigo-300'}`}>
-                {p}
+            {[
+              { label: 'All', value: 'mixed' },
+              { label: 'Amazon', value: 'amazon' },
+              { label: 'Flipkart', value: 'flipkart' },
+            ].map((p) => (
+              <button key={p.value} onClick={() => setPlatform(p.value)}
+                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${platform === p.value ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-indigo-300'}`}>
+                {p.label}
               </button>
             ))}
           </div>
@@ -117,6 +128,7 @@ const ProductSearchPage = () => {
         </div>
 
         {error ? <p className="text-sm text-red-500 mb-4">{error}</p> : null}
+        {message ? <p className="text-sm text-amber-600 mb-4">{message}</p> : null}
         <p className="text-sm text-gray-500 mb-4">{loading?'Searching...':`${filtered.length} product(s) found`}{query&&` for "${query}"`}</p>
 
         {loading ? (
@@ -135,8 +147,8 @@ const ProductSearchPage = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {filtered.map(p=>(
-              <ProductCard key={p.id} product={p} onClick={id=>navigate(`/product/${id}`)}/>
+            {filtered.map((p) => (
+              <ProductCard key={p.id} product={p} onClick={(product) => navigate('/product-details', { state: { product } })} />
             ))}
           </div>
         )}

@@ -80,8 +80,8 @@ const ReviewDisplayPage = () => {
       setLoading(true);
       setError('');
       try {
-        const productData = await getProduct(id);
-        const reviewData = await getProductReviews(id);
+        const productData = await getProduct(decodeURIComponent(id));
+        const reviewData = await getProductReviews(decodeURIComponent(id));
         setProductName(productData.name);
         setReviews(reviewData);
       } catch (err) {
@@ -198,7 +198,7 @@ const ReviewDisplayPage = () => {
         {/* Reviews Grid */}
         {filtered.length === 0 ? (
           <div className="text-center py-16">
-            <p className="text-gray-400 text-sm">No reviews match your filters.</p>
+            <p className="text-gray-400 text-sm">{reviews.length === 0 ? 'No reviews found' : 'No reviews match your filters.'}</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

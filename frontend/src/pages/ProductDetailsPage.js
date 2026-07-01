@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DonutChart from '../components/DonutChart';
-import { getProduct, getProductReviews } from '../services/api';
+import { getProduct, getStoredAnalyzedProduct } from '../services/api';
 
 const MiniTrendLine = () => (
   <svg viewBox="0 0 300 100" className="w-full h-24">
@@ -18,7 +18,7 @@ const MiniTrendLine = () => (
 );
 
 const ProductDetailsPage = () => {
-  const { id } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -27,11 +27,24 @@ const ProductDetailsPage = () => {
 
   useEffect(() => {
     const loadProduct = async () => {
+      const stateProduct = location.state?.product;
+      if (stateProduct) {
+        setProduct(stateProduct);
+        setLoading(false);
+        return;
+      }
+
+      const storedProduct = getStoredAnalyzedProduct();
+      if (storedProduct) {
+        setProduct(storedProduct);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setError('');
       try {
-        const productData = await getProduct(id);
-        await getProductReviews(id);
+        const productData = await getProduct('product');
         setProduct(productData);
       } catch (err) {
         setError('Unable to load product details right now.');
@@ -42,7 +55,7 @@ const ProductDetailsPage = () => {
     };
 
     loadProduct();
-  }, [id]);
+  }, [location.state]);
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -84,12 +97,16 @@ const ProductDetailsPage = () => {
         {/* Product Header */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
           <div className="flex flex-col lg:flex-row gap-6">
-            <div className="w-full lg:w-48 h-48 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl flex items-center justify-center flex-shrink-0">
-              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="1.5">
-                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-                <line x1="3" y1="6" x2="21" y2="6"/>
-                <path d="M16 10a4 4 0 0 1-8 0"/>
-              </svg>
+            <div className="w-full lg:w-48 h-48 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
+              {product.image ? (
+                <img src={product.image} alt={product.name} className="w-full h-full object-contain" />
+              ) : (
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="1.5">
+                  <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+                  <line x1="3" y1="6" x2="21" y2="6"/>
+                  <path d="M16 10a4 4 0 0 1-8 0"/>
+                </svg>
+              )}
             </div>
             <div className="flex-1">
               <div className="flex items-start justify-between mb-2">
@@ -109,8 +126,9 @@ const ProductDetailsPage = () => {
                 <span className="text-sm text-gray-500">({product.reviews.toLocaleString()} reviews)</span>
               </div>
               <p className="text-sm text-gray-600 mb-4">{product.description}</p>
+              {product.reviews === 0 ? <p className="text-sm text-amber-600 mb-4">No reviews found</p> : null}
               <div className="flex gap-3">
-                <button onClick={()=>navigate(`/reviews/${id}`)} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
+                <button onClick={()=>navigate('/search')} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
                   View All Reviews
                 </button>
                 <button className="border border-indigo-200 text-indigo-600 text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-indigo-50">
@@ -136,7 +154,11 @@ const ProductDetailsPage = () => {
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
               <h3 className="text-sm font-bold text-gray-800 mb-4">Sentiment Distribution</h3>
               <div className="flex flex-col items-center gap-4">
-                <DonutChart size={120} strokeWidth={18}/>
+                <DonutChart size={120} strokeWidth={18} segments={[
+                  { value: product.sentimentBreakdown.positive, color: '#22c55e' },
+                  { value: product.sentimentBreakdown.neutral, color: '#f59e0b' },
+                  { value: product.sentimentBreakdown.negative, color: '#ef4444' },
+                ]} />
                 <div className="w-full space-y-2">
                   {[{label:'Positive',p:product.sentimentBreakdown.positive,c:'#22c55e'},{label:'Neutral',p:product.sentimentBreakdown.neutral,c:'#f59e0b'},{label:'Negative',p:product.sentimentBreakdown.negative,c:'#ef4444'}].map(s=>(
                     <div key={s.label} className="flex items-center gap-2">

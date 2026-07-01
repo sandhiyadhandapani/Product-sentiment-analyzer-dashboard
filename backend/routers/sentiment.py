@@ -30,7 +30,7 @@ async def analyze_product_endpoint(payload: AnalyzeRequest):
         raise HTTPException(status_code=400, detail="Product name cannot be empty")
 
     try:
-        return analyze_product(payload.product)
+        return analyze_product(payload.product, platform=payload.platform)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - defensive handling
