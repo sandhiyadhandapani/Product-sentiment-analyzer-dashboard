@@ -1,27 +1,10 @@
 from fastapi import APIRouter, HTTPException
 
+from data.analysis_store import get_analysis_history
 from schemas.product_schema import AnalyzeRequest, AnalysisResponse, ReviewRequest, SentimentResponse
-from sentiment.analyzer import analyze_product
+from sentiment.analyzer import analyze_product, analyze_sentiment
 
 router = APIRouter(tags=["sentiment"])
-
-
-def analyze_sentiment_text(text: str) -> str:
-    cleaned = text.strip().lower()
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Review text cannot be empty")
-
-    positive_words = {"good", "great", "excellent", "love", "amazing", "awesome", "best", "fantastic", "nice"}
-    negative_words = {"bad", "poor", "worst", "hate", "terrible", "awful", "disappointing", "slow", "expensive"}
-
-    positive_count = sum(1 for word in positive_words if word in cleaned)
-    negative_count = sum(1 for word in negative_words if word in cleaned)
-
-    if positive_count > negative_count:
-        return "Positive"
-    if negative_count > positive_count:
-        return "Negative"
-    return "Neutral"
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
@@ -37,6 +20,11 @@ async def analyze_product_endpoint(payload: AnalyzeRequest):
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}") from exc
 
 
+@router.get("/history", response_model=list[AnalysisResponse])
+async def get_analysis_history_endpoint():
+    return get_analysis_history()
+
+
 @router.post("/api/analyze", response_model=AnalysisResponse, include_in_schema=False)
 async def analyze_product_alias(payload: AnalyzeRequest):
     return await analyze_product_endpoint(payload)
@@ -47,5 +35,5 @@ async def analyze_review(payload: ReviewRequest):
     if not payload.review_text or not payload.review_text.strip():
         raise HTTPException(status_code=400, detail="Review text cannot be empty")
 
-    sentiment = analyze_sentiment_text(payload.review_text)
-    return {"sentiment": sentiment}
+    sentiment = analyze_sentiment(payload.review_text)
+    return {"sentiment": sentiment["sentiment"]}

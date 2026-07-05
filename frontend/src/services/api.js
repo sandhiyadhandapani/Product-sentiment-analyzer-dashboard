@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: process.env.REACT_APP_API_BASE_URL || 'http://127.0.0.1:8000/api',
   timeout: 20000,
 });
 
@@ -53,9 +53,9 @@ const normalizeProduct = (product) => {
 
   const scoreSummary = reviews.reduce(
     (acc, review) => {
-      const rating = Number(review.review_rating ?? review.rating ?? 0);
-      if (rating >= 4) acc.positive += 1;
-      else if (rating >= 3) acc.neutral += 1;
+      const sentiment = review.sentiment || getSentimentFromRating(Number(review.review_rating ?? review.rating ?? 0));
+      if (sentiment === 'Positive') acc.positive += 1;
+      else if (sentiment === 'Neutral') acc.neutral += 1;
       else acc.negative += 1;
       return acc;
     },
@@ -65,7 +65,7 @@ const normalizeProduct = (product) => {
   const total = reviewCount || 1;
   const positive = Math.round((scoreSummary.positive / total) * 100);
   const neutral = Math.round((scoreSummary.neutral / total) * 100);
-  const negative = 100 - positive - neutral;
+  const negative = Math.round((scoreSummary.negative / total) * 100);
 
   const sentiment =
     positive > neutral && positive > negative
@@ -105,21 +105,22 @@ const normalizeProduct = (product) => {
 
 const normalizeReview = (review, productPlatform = 'FirstCry') => {
   const rating = Number(review.review_rating ?? review.rating ?? 0);
+  const sentiment = review.sentiment || getSentimentFromRating(rating);
   return {
     id: review.id || `${productPlatform}-${Math.random().toString(36).slice(2, 8)}`,
-    user: 'Customer',
+    user: review.username || review.reviewer_name || 'Customer',
     rating,
-    date: 'Recently reviewed',
-    title: 'Customer Review',
-    text: review.review_text || review.comment || '',
-    sentiment: getSentimentFromRating(rating),
-    platform: productPlatform,
+    date: review.review_date || review.date || 'Recently reviewed',
+    title: review.title || 'Customer Review',
+    text: review.review_text || review.comment || review.text || '',
+    sentiment,
+    platform: review.platform || productPlatform,
     helpful: Math.max(5, Math.round(rating * 7)),
   };
 };
 
 export const getProducts = async () => {
-  const { data } = await api.get('/products');
+  const { data } = await api.get('products');
   return data.map(normalizeProduct);
 };
 
@@ -130,7 +131,7 @@ export const getProduct = async (query) => {
 
 export const analyzeProduct = async (productName, platform = 'firstcry') => {
   try {
-    const response = await axios.post('http://127.0.0.1:8001/analyze', {
+    const response = await api.post('analyze', {
       product: productName,
       platform,
     });
@@ -177,11 +178,11 @@ export const getProductReviews = async (query) => {
 };
 
 export const analyzeReview = async (reviewText) => {
-  const { data } = await api.post('/analyze', { review_text: reviewText });
+  const { data } = await api.post('review-analyze', { review_text: reviewText });
   return data;
 };
 
 export const healthCheck = async () => {
-  const { data } = await api.get('/health');
+  const { data } = await api.get('health');
   return data;
 };

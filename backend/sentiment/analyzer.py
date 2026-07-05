@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from data.analysis_store import save_analysis_result
 from scraper.firstcry_scraper import scrape_firstcry_reviews
 from utils.cleaner import clean_text
 
@@ -145,7 +146,7 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
     else:
         message = block_message
 
-    return {
+    result = {
         "success": has_real_product,
         "product": product_query,
         "product_name": product_name,
@@ -167,3 +168,9 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         },
         "message": message,
     }
+
+    try:
+        return save_analysis_result(result)
+    except Exception as exc:
+        logger.warning("Failed to store analysis result: %s", exc)
+        return result

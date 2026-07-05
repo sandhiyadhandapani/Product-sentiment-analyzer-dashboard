@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DonutChart from '../components/DonutChart';
@@ -19,6 +19,7 @@ const MiniTrendLine = () => (
 
 const ProductDetailsPage = () => {
   const location = useLocation();
+  const params = useParams();
   const navigate = useNavigate();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,10 +42,18 @@ const ProductDetailsPage = () => {
         return;
       }
 
+      const query = params.id ? decodeURIComponent(params.id) : null;
+      if (!query) {
+        setError('No product selected.');
+        setProduct(null);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setError('');
       try {
-        const productData = await getProduct('product');
+        const productData = await getProduct(query);
         setProduct(productData);
       } catch (err) {
         setError('Unable to load product details right now.');
@@ -55,7 +64,7 @@ const ProductDetailsPage = () => {
     };
 
     loadProduct();
-  }, [location.state]);
+  }, [location.state, params.id]);
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -128,7 +137,7 @@ const ProductDetailsPage = () => {
               <p className="text-sm text-gray-600 mb-4">{product.description}</p>
               {product.reviews === 0 ? <p className="text-sm text-amber-600 mb-4">No reviews found</p> : null}
               <div className="flex gap-3">
-                <button onClick={()=>navigate('/search')} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
+                <button onClick={()=>navigate(`/reviews/${encodeURIComponent(product.name)}`)} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
                   View All Reviews
                 </button>
                 <button className="border border-indigo-200 text-indigo-600 text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-indigo-50">
