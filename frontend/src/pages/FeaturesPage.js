@@ -37,8 +37,8 @@ const FeaturesPage = () => {
   const features = [
     {
       title: 'Product Search',
-      description: 'Instantly search any product from Amazon or Flipkart. Our scraper fetches the most recent and relevant customer reviews directly from the product listing page.',
-      bullets: ['Search by product name or keyword', 'Supports Amazon & Flipkart simultaneously', 'Auto-fetches top 100 reviews per product', 'Filter results by platform, rating, or category'],
+      description: 'Instantly search any product on FirstCry. Our scraper fetches the most recent and relevant customer reviews directly from the product listing page.',
+      bullets: ['Search by product name or keyword', 'Focused on FirstCry product pages', 'Auto-fetches recent reviews per product', 'Filter results by sentiment or category'],
       color: '#6366f1',
       bg: '#eef2ff',
       icon: <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>,
@@ -111,11 +111,11 @@ const FeaturesPage = () => {
               '📥 CSV Export',
               '🔍 Review Search & Filter',
               '📈 Trend Analysis',
-              '🌐 Multi-platform Support',
+              '🌐 FirstCry Focus',
               '⚡ Fast Load Times',
               '🔒 Secure API Calls',
               '🎨 Beautiful Charts',
-              '📊 Platform Comparison',
+              '📊 Review Summary Insights',
             ].map((item) => (
               <div key={item} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 text-sm font-medium text-gray-700 flex items-center gap-2">
                 <span>{item}</span>

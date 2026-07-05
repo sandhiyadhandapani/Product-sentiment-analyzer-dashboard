@@ -286,7 +286,7 @@ const HomePage = () => {
                 <span className="text-indigo-400">Analyzer</span>
               </h1>
               <p className="text-gray-300 text-sm leading-relaxed mb-8 max-w-md">
-                Search any product from Amazon or Flipkart and get AI-powered insights from thousands of customer reviews.
+                Search any baby or kids product on FirstCry and get AI-powered insights from customer reviews.
               </p>
 
               {/* Search Bar */}
@@ -315,23 +315,9 @@ const HomePage = () => {
                 </button>
               </form>
 
-              {/* Brand Logos */}
-              <div className="flex items-center gap-6">
-                {/* Amazon */}
-                <div className="flex items-center gap-2 bg-white bg-opacity-10 rounded-xl px-4 py-2">
-                  <svg width="60" height="20" viewBox="0 0 100 30">
-                    <text x="0" y="22" fontFamily="Arial" fontWeight="bold" fontSize="22" fill="white">amazon</text>
-                    <path d="M 5 26 Q 50 32 95 26" fill="none" stroke="#FF9900" strokeWidth="2.5" />
-                    <polygon points="93,24 97,26 93,28" fill="#FF9900" />
-                  </svg>
-                </div>
-                {/* Flipkart */}
-                <div className="flex items-center gap-2 bg-white bg-opacity-10 rounded-xl px-4 py-2">
-                  <svg width="70" height="20" viewBox="0 0 110 30">
-                    <rect x="0" y="2" width="26" height="26" rx="4" fill="#F6CA00" />
-                    <text x="3" y="21" fontFamily="Arial" fontWeight="bold" fontSize="16" fill="#2874F0">F</text>
-                    <text x="30" y="22" fontFamily="Arial" fontWeight="bold" fontSize="16" fill="white">flipkart</text>
-                  </svg>
+              <div className="flex items-center gap-3">
+                <div className="bg-white bg-opacity-10 rounded-xl px-4 py-2 text-sm font-semibold text-white">
+                  FirstCry Reviews
                 </div>
               </div>
 
@@ -374,21 +360,11 @@ const HomePage = () => {
                 <HeroBarIcon />
               </div>
 
-              {/* Amazon bag */}
               <div className="absolute bottom-10 left-0 w-12 h-12 bg-white rounded-xl shadow-lg flex items-center justify-center animate-float" style={{ animationDelay: '1s' }}>
                 <svg width="28" height="28" viewBox="0 0 32 32">
-                  <rect x="4" y="10" width="24" height="18" rx="2" fill="#FF9900" />
+                  <rect x="4" y="10" width="24" height="18" rx="2" fill="#ec4899" />
                   <path d="M11 10V8a5 5 0 0 1 10 0v2" fill="none" stroke="white" strokeWidth="2" />
-                  <text x="16" y="23" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">a</text>
-                </svg>
-              </div>
-
-              {/* Flipkart bag */}
-              <div className="absolute top-16 left-4 w-12 h-12 bg-white rounded-xl shadow-lg flex items-center justify-center animate-float" style={{ animationDelay: '2s' }}>
-                <svg width="28" height="28" viewBox="0 0 32 32">
-                  <rect x="4" y="10" width="24" height="18" rx="2" fill="#F6CA00" />
-                  <path d="M11 10V8a5 5 0 0 1 10 0v2" fill="none" stroke="#2874F0" strokeWidth="2" />
-                  <text x="16" y="23" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#2874F0">F</text>
+                  <text x="16" y="23" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">F</text>
                 </svg>
               </div>
             </div>
@@ -407,7 +383,7 @@ const HomePage = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
             <FeatureCard
               title="Product Search"
-              description="Search any product from Amazon or Flipkart and fetch real customer reviews."
+              description="Search any product on FirstCry and fetch real customer reviews."
               icon={
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2">
                   <circle cx="11" cy="11" r="8" />
@@ -488,7 +464,7 @@ const HomePage = () => {
               <StepCard
                 number="2"
                 title="Collect Reviews"
-                description="Our system scrapes reviews from Amazon & Flipkart."
+                description="Our system scrapes reviews from FirstCry."
                 color="#22c55e"
                 icon={
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2">

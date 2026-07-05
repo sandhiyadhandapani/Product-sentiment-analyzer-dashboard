@@ -34,7 +34,7 @@ const normalizeImageUrl = (image) => {
   const withProtocol = value.startsWith('//') ? `https:${value}` : value;
   const lowered = withProtocol.toLowerCase();
 
-  if (lowered.includes('flipkart') || lowered.includes('/logo') || lowered.includes('/static') || lowered.includes('placeholder') || lowered.includes('assets')) {
+  if (lowered.includes('/logo') || lowered.includes('/static') || lowered.includes('placeholder') || lowered.includes('assets')) {
     return '';
   }
 
@@ -81,7 +81,7 @@ const normalizeProduct = (product) => {
   return {
     id: product.product || product.name || product.product_name || 'analysis-result',
     name: productName,
-    platform: (product.platform || 'Amazon').toString().replace(/^./, (c) => c.toUpperCase()),
+    platform: (product.platform || 'FirstCry').toString().replace(/^./, (c) => c.toUpperCase()),
     price: productPrice,
     rating: productRating,
     reviews: reviewCount,
@@ -103,7 +103,7 @@ const normalizeProduct = (product) => {
   };
 };
 
-const normalizeReview = (review, productPlatform = 'Amazon') => {
+const normalizeReview = (review, productPlatform = 'FirstCry') => {
   const rating = Number(review.review_rating ?? review.rating ?? 0);
   return {
     id: review.id || `${productPlatform}-${Math.random().toString(36).slice(2, 8)}`,
@@ -124,11 +124,11 @@ export const getProducts = async () => {
 };
 
 export const getProduct = async (query) => {
-  const data = await analyzeProduct(query, 'amazon');
+  const data = await analyzeProduct(query, 'firstcry');
   return normalizeProduct(data);
 };
 
-export const analyzeProduct = async (productName, platform = 'amazon') => {
+export const analyzeProduct = async (productName, platform = 'firstcry') => {
   try {
     const response = await axios.post('http://127.0.0.1:8001/analyze', {
       product: productName,
@@ -153,7 +153,7 @@ export const analyzeProduct = async (productName, platform = 'amazon') => {
   }
 };
 
-export const searchProducts = async (query = '', platform = 'amazon') => {
+export const searchProducts = async (query = '', platform = 'firstcry') => {
   const trimmed = query.trim();
   if (!trimmed) return { products: [], message: 'Please enter a product name to analyze.' };
 
@@ -172,8 +172,8 @@ export const searchProducts = async (query = '', platform = 'amazon') => {
 };
 
 export const getProductReviews = async (query) => {
-  const data = await analyzeProduct(query, 'amazon');
-  return (data.reviews || []).map((review) => normalizeReview(review, data.platform || 'Amazon'));
+  const data = await analyzeProduct(query, 'firstcry');
+  return (data.reviews || []).map((review) => normalizeReview(review, data.platform || 'FirstCry'));
 };
 
 export const analyzeReview = async (reviewText) => {

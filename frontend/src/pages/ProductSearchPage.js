@@ -23,7 +23,7 @@ const ProductCard = ({ product, onClick }) => {
       </div>
       <h3 className="text-sm font-bold text-gray-900 mb-1 truncate">{product.name}</h3>
       <div className="flex items-center justify-between mb-2">
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${product.platform==='Amazon'?'bg-orange-50 text-orange-600':'bg-blue-50 text-blue-600'}`}>{product.platform}</span>
+        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-pink-50 text-pink-600">{product.platform || 'FirstCry'}</span>
         <span className="text-sm font-bold text-indigo-600">{product.price}</span>
       </div>
       <div className="flex items-center gap-1 mb-3">
@@ -50,7 +50,7 @@ const ProductSearchPage = () => {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [filter, setFilter] = useState('All');
-  const [platform, setPlatform] = useState('mixed');
+  const [platform] = useState('mixed');
   const navigate = useNavigate();
 
   const doSearch = async (q) => {
@@ -104,17 +104,8 @@ const ProductSearchPage = () => {
         {/* Filters */}
         <div className="flex flex-wrap gap-4 mb-6">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-gray-600">Platform:</span>
-            {[
-              { label: 'All', value: 'mixed' },
-              { label: 'Amazon', value: 'amazon' },
-              { label: 'Flipkart', value: 'flipkart' },
-            ].map((p) => (
-              <button key={p.value} onClick={() => setPlatform(p.value)}
-                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${platform === p.value ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-indigo-300'}`}>
-                {p.label}
-              </button>
-            ))}
+            <span className="text-xs font-semibold text-gray-600">Source:</span>
+            <span className="text-xs px-3 py-1.5 rounded-full font-medium bg-pink-50 text-pink-600 border border-pink-200">FirstCry</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-gray-600">Sentiment:</span>

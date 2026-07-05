@@ -112,7 +112,7 @@ const ProductDetailsPage = () => {
               <div className="flex items-start justify-between mb-2">
                 <div>
                   <h1 className="text-xl font-extrabold text-gray-900">{product.name}</h1>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded mt-1 inline-block ${product.platform==='Amazon'?'bg-orange-50 text-orange-600':'bg-blue-50 text-blue-600'}`}>{product.platform}</span>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded mt-1 inline-block bg-pink-50 text-pink-600">{product.platform || 'FirstCry'}</span>
                 </div>
                 <span className="text-xl font-bold text-indigo-600">{product.price}</span>
               </div>

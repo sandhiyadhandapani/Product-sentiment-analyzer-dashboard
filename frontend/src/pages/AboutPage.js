@@ -49,8 +49,8 @@ const AboutPage = () => {
               <div className="w-10 h-1 bg-indigo-600 rounded-full mb-5" />
               <p className="text-gray-600 text-sm leading-relaxed mb-4">
                 Product Sentiment Analyzer was built to bridge the gap between raw customer
-                feedback and meaningful product intelligence. With millions of reviews
-                published daily on Amazon and Flipkart, it's impossible to read them all.
+                feedback and meaningful product intelligence. With thousands of reviews
+                published daily on FirstCry, it's impossible to read them all.
               </p>
               <p className="text-gray-600 text-sm leading-relaxed mb-4">
                 Our AI-powered NLP engine scrapes, processes, and classifies reviews in
@@ -65,7 +65,7 @@ const AboutPage = () => {
             <div className="grid grid-cols-2 gap-4">
               {[
                 { icon: '🎯', title: 'Accurate', desc: '95%+ sentiment classification accuracy using advanced NLP models.' },
-                { icon: '⚡', title: 'Real-time', desc: 'Live web scraping from Amazon & Flipkart product pages.' },
+                { icon: '⚡', title: 'Real-time', desc: 'Live web scraping from FirstCry product pages.' },
                 { icon: '📊', title: 'Visual', desc: 'Interactive charts, trend graphs, and word cloud analysis.' },
                 { icon: '🔒', title: 'Reliable', desc: 'Robust scraping pipeline with fallback data mechanisms.' },
               ].map((item) => (

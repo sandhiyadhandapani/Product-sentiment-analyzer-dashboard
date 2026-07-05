@@ -132,9 +132,9 @@ const DashboardPage = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Platform Tabs */}
+        {/* Source tabs */}
         <div className="flex gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm w-fit">
-          {['All','Amazon','Flipkart'].map(tab=>(
+          {['All','FirstCry'].map(tab=>(
             <button key={tab} onClick={()=>setPlatformTab(tab)}
               className={`text-xs font-semibold px-5 py-2 rounded-lg transition-colors ${platformTab===tab?'bg-indigo-600 text-white':'text-gray-600 hover:text-indigo-600'}`}>
               {tab}
@@ -231,7 +231,7 @@ const DashboardPage = () => {
                           <div className="text-xs text-gray-400">{p.category}</div>
                         </td>
                         <td className="px-3 py-3">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${p.platform==='Amazon'?'bg-orange-50 text-orange-600':'bg-blue-50 text-blue-600'}`}>{p.platform}</span>
+                          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-pink-50 text-pink-600">{p.platform || 'FirstCry'}</span>
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1">
@@ -257,17 +257,17 @@ const DashboardPage = () => {
           </div>
         </div>
 
-        {/* Platform Comparison */}
+        {/* Source Summary */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <h3 className="text-sm font-bold text-gray-800 mb-5">Platform Comparison</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {['Amazon','Flipkart'].map(plat=>{
-              const pp=products.filter(p=>p.platform===plat);
-              const avgR=(pp.reduce((s,p)=>s+p.rating,0)/pp.length).toFixed(1);
+          <h3 className="text-sm font-bold text-gray-800 mb-5">Source Summary</h3>
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
+            {['FirstCry'].map(plat=>{
+              const pp=products.filter(p=>p.platform===plat || !p.platform || p.platform==='FirstCry');
+              const avgR=(pp.reduce((s,p)=>s+p.rating,0)/pp.length || 0).toFixed(1);
               const totalR=pp.reduce((s,p)=>s+p.reviews,0);
-              const posP=Math.round(pp.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/pp.length);
-              const color=plat==='Amazon'?'#f97316':'#3b82f6';
-              const bg=plat==='Amazon'?'#fff7ed':'#eff6ff';
+              const posP=pp.length ? Math.round(pp.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/pp.length) : 0;
+              const color='#ec4899';
+              const bg='#fdf2f8';
               return (
                 <div key={plat} className="rounded-xl p-5 border" style={{background:bg,borderColor:color+'30'}}>
                   <div className="flex items-center gap-2 mb-4">

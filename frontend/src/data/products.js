@@ -9,5 +9,4 @@ export {
 
 export const ALL_PRODUCTS = [];
 export const getProductById = async (id) => getProduct(id);
-export const AMAZON_PRODUCTS = [];
-export const FLIPKART_PRODUCTS = [];
+export const FIRSTCRY_PRODUCTS = [];

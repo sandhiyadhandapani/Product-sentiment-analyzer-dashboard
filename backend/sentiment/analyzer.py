@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from scraper.amazon_scraper import scrape_amazon_reviews
-from scraper.flipkart_scraper import scrape_flipkart_reviews
+from scraper.firstcry_scraper import scrape_firstcry_reviews
 from utils.cleaner import clean_text
 
 logger = logging.getLogger(__name__)
@@ -69,28 +68,18 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         raise ValueError("Product name cannot be empty")
 
     requested_platform = (platform or "mixed").strip().lower()
-    if requested_platform not in {"amazon", "flipkart", "mixed"}:
-        raise ValueError("Platform must be one of: amazon, flipkart, mixed")
+    if requested_platform not in {"firstcry", "mixed"}:
+        raise ValueError("Platform must be one of: firstcry, mixed")
 
-    amazon_result = {"reviews": [], "meta": {}}
-    flipkart_result = {"reviews": [], "meta": {}}
+    firstcry_result = {"reviews": [], "meta": {}}
 
-    if requested_platform in {"amazon", "mixed"}:
-        try:
-            amazon_result = scrape_amazon_reviews(product_query, max_reviews=10, return_metadata=True)
-        except Exception as exc:
-            logger.warning("Amazon review scraping failed: %s", exc)
+    try:
+        firstcry_result = scrape_firstcry_reviews(product_query, max_reviews=10, return_metadata=True)
+    except Exception as exc:
+        logger.warning("FirstCry review scraping failed: %s", exc)
 
-    if requested_platform in {"flipkart", "mixed"}:
-        try:
-            flipkart_result = scrape_flipkart_reviews(product_query, max_reviews=10, return_metadata=True)
-        except Exception as exc:
-            logger.warning("Flipkart review scraping failed: %s", exc)
-
-    amazon_reviews = amazon_result.get("reviews", []) if isinstance(amazon_result, dict) else []
-    amazon_meta = amazon_result.get("meta", {}) if isinstance(amazon_result, dict) else {}
-    flipkart_reviews = flipkart_result.get("reviews", []) if isinstance(flipkart_result, dict) else []
-    flipkart_meta = flipkart_result.get("meta", {}) if isinstance(flipkart_result, dict) else {}
+    firstcry_reviews = firstcry_result.get("reviews", []) if isinstance(firstcry_result, dict) else []
+    firstcry_meta = firstcry_result.get("meta", {}) if isinstance(firstcry_result, dict) else {}
 
     selected_platform = requested_platform
     selected_reviews: list[dict] = []
@@ -103,33 +92,17 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         "total_ratings": None,
     }
 
-    if requested_platform == "amazon":
-        selected_reviews = amazon_reviews
-        selected_meta = amazon_meta if amazon_meta else None
-        product_metadata.update({k: v for k, v in amazon_meta.items() if k in product_metadata and v is not None})
-    elif requested_platform == "flipkart":
-        selected_reviews = flipkart_reviews
-        selected_meta = flipkart_meta if flipkart_meta else None
-        product_metadata.update({k: v for k, v in flipkart_meta.items() if k in product_metadata and v is not None})
+    if firstcry_reviews:
+        selected_reviews = firstcry_reviews
+        selected_meta = firstcry_meta if firstcry_meta else None
+        product_metadata.update({k: v for k, v in firstcry_meta.items() if k in product_metadata and v is not None})
     else:
-        if amazon_reviews:
-            selected_reviews = amazon_reviews + flipkart_reviews
-            selected_meta = amazon_meta or flipkart_meta or None
-            product_metadata.update({k: v for k, v in amazon_meta.items() if k in product_metadata and v is not None})
-        elif flipkart_reviews:
-            selected_reviews = flipkart_reviews
-            selected_meta = flipkart_meta or None
-            product_metadata.update({k: v for k, v in flipkart_meta.items() if k in product_metadata and v is not None})
-        else:
-            selected_reviews = []
-            selected_meta = amazon_meta or flipkart_meta or None
-            product_metadata.update({k: v for k, v in (amazon_meta or {}).items() if k in product_metadata and v is not None})
-            product_metadata.update({k: v for k, v in (flipkart_meta or {}).items() if k in product_metadata and v is not None})
+        selected_reviews = []
+        selected_meta = firstcry_meta if firstcry_meta else None
+        product_metadata.update({k: v for k, v in (firstcry_meta or {}).items() if k in product_metadata and v is not None})
 
-    if amazon_meta:
-        _log_scraper_metadata("amazon", "scrape_amazon_reviews", amazon_meta)
-    if flipkart_meta:
-        _log_scraper_metadata("flipkart", "scrape_flipkart_reviews", flipkart_meta)
+    if firstcry_meta:
+        _log_scraper_metadata("firstcry", "scrape_firstcry_reviews", firstcry_meta)
 
     logger.info("Analyze selected platform: %s", selected_platform)
 

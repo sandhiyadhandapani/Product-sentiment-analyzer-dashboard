@@ -44,8 +44,8 @@ const HowItWorksPage = () => {
     {
       number: '1',
       title: 'Search for a Product',
-      description: 'Enter the name of any product you want to analyze in the search bar. Our system supports searches across both Amazon and Flipkart simultaneously.',
-      details: ['Type any product name or keyword','Choose the platform (Amazon / Flipkart / Both)','System auto-completes popular searches','No account or login required'],
+      description: 'Enter the name of any product you want to analyze in the search bar. Our system focuses on FirstCry product pages for review analysis.',
+      details: ['Type any product name or keyword','Use the FirstCry source flow','System auto-completes popular searches','No account or login required'],
       color: '#6366f1', bg: '#eef2ff',
       icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>,
     },
@@ -78,7 +78,7 @@ const HowItWorksPage = () => {
   const faqs = [
     { q: 'How accurate is the sentiment analysis?', a: 'Our NLP model achieves 95%+ accuracy on standard English reviews and around 88% on mixed Hinglish content.' },
     { q: 'How many reviews are scraped per search?', a: 'By default the scraper collects up to 100 of the most recent reviews. This can be configured in the backend settings.' },
-    { q: 'Does it work for any product?', a: 'Yes — any product listed on Amazon.in or Flipkart.com with customer reviews can be analyzed.' },
+    { q: 'Does it work for any product?', a: 'Yes — any product listed on FirstCry with customer reviews can be analyzed.' },
     { q: 'How long does a search take?', a: 'A typical search takes 15–30 seconds for scraping + 5–10 seconds for NLP processing.' },
     { q: 'Can I export the results?', a: 'Yes. You can export the full review dataset and sentiment breakdown as a CSV file from the dashboard.' },
     { q: 'Is the data live or cached?', a: 'Data is scraped live on every search, so you always get the most recent customer opinions.' },
@@ -119,7 +119,7 @@ const HowItWorksPage = () => {
               { label: '→', sub: '', color: '#9ca3af', bg: 'transparent' },
               { label: 'Flask API', sub: 'REST Endpoints', color: '#000', bg: '#f5f5f5' },
               { label: '→', sub: '', color: '#9ca3af', bg: 'transparent' },
-              { label: 'Selenium Scraper', sub: 'Amazon & Flipkart', color: '#22c55e', bg: '#f0fdf4' },
+              { label: 'Selenium Scraper', sub: 'FirstCry', color: '#22c55e', bg: '#f0fdf4' },
               { label: '→', sub: '', color: '#9ca3af', bg: 'transparent' },
               { label: 'NLP Model', sub: 'BERT Classifier', color: '#a855f7', bg: '#f5f3ff' },
               { label: '→', sub: '', color: '#9ca3af', bg: 'transparent' },

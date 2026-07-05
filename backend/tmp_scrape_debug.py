@@ -21,8 +21,7 @@ def build_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 for site, url in [
-    ('amazon', 'https://www.amazon.in/s?k=iphone+15'),
-    ('flipkart', 'https://www.flipkart.com/search?q=iphone+15'),
+    ('firstcry', 'https://www.firstcry.com/search?q=iphone+15'),
 ]:
     print('SITE', site)
     driver = build_driver()
@@ -38,7 +37,7 @@ for site, url in [
         for marker in ['review', 'reviews', 'rating', 'captcha', 'verify']:
             if marker in html.lower():
                 print('marker', marker, 'found')
-        if site == 'amazon':
+        if site == 'firstcry':
             for selector in ['div[data-hook="review"]', 'span[data-hook="review-body"]', 'a[data-hook="see-all-reviews-link-foot"]', 'a[href*="product-reviews"]']:
                 try:
                     elem = driver.find_element(By.CSS_SELECTOR, selector)
