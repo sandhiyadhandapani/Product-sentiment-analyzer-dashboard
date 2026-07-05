@@ -75,7 +75,6 @@ const ReviewRow = ({user,stars,text,sentiment}) => {
 const DashboardPage = () => {
   const navigate = useNavigate();
   const [range, setRange] = useState('Last 30 Days');
-  const [platformTab, setPlatformTab] = useState('All');
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -94,7 +93,7 @@ const DashboardPage = () => {
     setError('No analyzed product yet. Search a product to populate the dashboard.');
   }, []);
 
-  const filtered = platformTab==='All' ? products : products.filter(p=>p.platform===platformTab);
+  const filtered = products;
   const totalReviews = filtered.reduce((s,p)=>s+p.reviews,0);
   const avgRating = filtered.length ? (filtered.reduce((s,p)=>s+p.rating,0)/filtered.length).toFixed(1) : '0.0';
   const overallPos = filtered.length ? Math.round(filtered.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/filtered.length) : 0;
@@ -132,15 +131,6 @@ const DashboardPage = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Source tabs */}
-        <div className="flex gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm w-fit">
-          {['All','FirstCry'].map(tab=>(
-            <button key={tab} onClick={()=>setPlatformTab(tab)}
-              className={`text-xs font-semibold px-5 py-2 rounded-lg transition-colors ${platformTab===tab?'bg-indigo-600 text-white':'text-gray-600 hover:text-indigo-600'}`}>
-              {tab}
-            </button>
-          ))}
-        </div>
 
         {error ? <p className="text-sm text-red-500">{error}</p> : null}
         {loading ? <p className="text-sm text-gray-500">Loading dashboard data...</p> : null}

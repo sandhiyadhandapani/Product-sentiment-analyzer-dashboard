@@ -44,7 +44,7 @@ async def get_product_reviews(product_id: str):
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    analysis = analyze_product(product["name"], platform="mixed")
+    analysis = analyze_product(product["name"], platform="firstcry")
     review_items = []
     for index, review in enumerate(analysis.get("reviews", []), start=1):
         review_items.append(
@@ -60,7 +60,7 @@ async def get_product_reviews(product_id: str):
     return {
         "product_id": product_id,
         "product_name": product["name"],
-        "platform": analysis.get("platform", "mixed"),
+        "platform": analysis.get("platform", "firstcry"),
         "reviews": review_items,
         "summary": analysis.get("summary", {"positive": 0, "negative": 0, "neutral": 0, "total_reviews": 0}),
         "message": analysis.get("message"),

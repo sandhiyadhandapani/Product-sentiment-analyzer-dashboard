@@ -67,9 +67,9 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
     if not product_query:
         raise ValueError("Product name cannot be empty")
 
-    requested_platform = (platform or "mixed").strip().lower()
-    if requested_platform not in {"firstcry", "mixed"}:
-        raise ValueError("Platform must be one of: firstcry, mixed")
+    requested_platform = (platform or "firstcry").strip().lower()
+    if requested_platform != "firstcry":
+        raise ValueError("Platform must be: firstcry")
 
     firstcry_result = {"reviews": [], "meta": {}}
 

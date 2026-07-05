@@ -27,7 +27,7 @@ class ReviewRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     product: str = Field(..., min_length=1)
-    platform: Literal["firstcry", "mixed"] = Field(default="mixed")
+    platform: Literal["firstcry"] = Field(default="firstcry")
 
 
 class ReviewSummary(BaseModel):

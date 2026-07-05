@@ -50,7 +50,7 @@ const ProductSearchPage = () => {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [filter, setFilter] = useState('All');
-  const [platform] = useState('mixed');
+  const [platform] = useState('firstcry');
   const navigate = useNavigate();
 
   const doSearch = async (q) => {

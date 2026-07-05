@@ -19,16 +19,20 @@ class AnalyzeProductTests(unittest.TestCase):
         self.assertEqual(result["reviews"][0]["sentiment"], "Positive")
 
     @patch("sentiment.analyzer.scrape_firstcry_reviews")
-    def test_analyze_product_treats_mixed_as_firstcry(self, mock_firstcry):
+    def test_analyze_product_defaults_to_firstcry(self, mock_firstcry):
         mock_firstcry.return_value = {
             "reviews": [{"review_text": "Bad experience and slow delivery", "rating": 2, "platform": "firstcry"}],
             "meta": {"blocked": False, "message": ""},
         }
 
-        result = analyze_product("iphone 15", platform="mixed")
+        result = analyze_product("iphone 15", platform=None)
 
-        self.assertEqual(result["platform"], "mixed")
+        self.assertEqual(result["platform"], "firstcry")
         self.assertEqual(result["reviews"][0]["sentiment"], "Negative")
+
+    def test_analyze_product_invalid_platform_raises_error(self):
+        with self.assertRaises(ValueError):
+            analyze_product("iphone 15", platform="invalid")
 
 
 if __name__ == "__main__":
