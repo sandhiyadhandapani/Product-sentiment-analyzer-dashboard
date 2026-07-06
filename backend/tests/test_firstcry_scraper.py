@@ -1,7 +1,11 @@
 import unittest
 from unittest.mock import patch
 
-from scraper.firstcry_scraper import extract_firstcry_product_details, scrape_firstcry_reviews
+from scraper.firstcry_scraper import (
+    extract_firstcry_product_details,
+    extract_reviews_from_html,
+    scrape_firstcry_reviews,
+)
 
 
 class FirstCryScraperTests(unittest.TestCase):
@@ -38,6 +42,58 @@ class FirstCryScraperTests(unittest.TestCase):
         self.assertEqual(result["total_reviews"], 300)
         self.assertEqual(result["description"], "Lightweight stroller with extra storage.")
         self.assertEqual(result["product_image"], "https://example.com/stroller.jpg")
+
+    def test_extract_firstcry_product_details_parses_embedded_json_fallback(self):
+        html = """
+        <html>
+          <body>
+            <script>
+              window.__NEXT_DATA__ = {"props": {"pageProps": {"product": {"name": "Baby Stroller", "image": "https://example.com/stroller.jpg", "price": "₹2,499", "originalPrice": "₹3,499", "discountPercentage": 28, "rating": 4.5, "ratings": 1200, "reviews": 300}}}};
+            </script>
+          </body>
+        </html>
+        """
+
+        result = extract_firstcry_product_details(html)
+
+        self.assertEqual(result["product_name"], "Baby Stroller")
+        self.assertEqual(result["current_price"], 2499)
+        self.assertEqual(result["original_price"], 3499)
+        self.assertEqual(result["discount_percentage"], 28)
+        self.assertEqual(result["rating"], 4.5)
+        self.assertEqual(result["total_ratings"], 1200)
+        self.assertEqual(result["total_reviews"], 300)
+        self.assertEqual(result["product_image"], "https://example.com/stroller.jpg")
+
+    def test_extract_reviews_from_html_filters_placeholder_and_duplicates(self):
+        html = """
+        <html>
+          <body>
+            <div class="review-card">
+              <div class="review-text">Ratings & Reviews</div>
+            </div>
+            <div class="review-card">
+              <div class="review-text">Write a Review</div>
+            </div>
+            <div class="review-card">
+              <div class="reviewer-name">Asha</div>
+              <div class="review-rating">5</div>
+              <div class="review-text">This stroller is excellent and very easy to use for daily walks.</div>
+            </div>
+            <div class="review-card">
+              <div class="reviewer-name">Asha</div>
+              <div class="review-rating">5</div>
+              <div class="review-text">This stroller is excellent and very easy to use for daily walks.</div>
+            </div>
+          </body>
+        </html>
+        """
+
+        result = extract_reviews_from_html(html, max_reviews=5)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["reviewer_name"], "Asha")
+        self.assertEqual(result[0]["review_rating"], 5)
 
     @patch("scraper.firstcry_scraper._build_driver")
     def test_scrape_firstcry_reviews_returns_structured_payload(self, mock_build_driver):

@@ -224,6 +224,8 @@ def _extract_product_jsonld(html: str) -> dict:
         if not payload:
             continue
         for obj in _iter_json_objects(payload):
+            if not isinstance(obj, dict):
+                continue
             obj_type = obj.get("@type") if isinstance(obj, dict) else None
             type_matches = obj_type == "Product" or (isinstance(obj_type, list) and "Product" in obj_type)
             if not type_matches:
@@ -235,10 +237,11 @@ def _extract_product_jsonld(html: str) -> dict:
             aggregate = obj.get("aggregateRating") or {}
 
             result = {
-                "product_name": _clean_text(obj.get("name")),
+                "product_name": _clean_text(obj.get("name") or obj.get("productName") or obj.get("title")),
                 "product_image": obj.get("image") if isinstance(obj.get("image"), str) else (obj.get("image") or [None])[0],
                 "description": _clean_text(obj.get("description")),
-                "current_price": _normalize_price(offers.get("price")),
+                "current_price": _normalize_price(offers.get("price") or offers.get("priceValue") or offers.get("lowPrice")),
+                "original_price": _normalize_price(offers.get("price") if isinstance(offers.get("price"), (int, float)) else None),
                 "rating": _normalize_rating(aggregate.get("ratingValue")) if aggregate else None,
                 "total_ratings": int(aggregate["ratingCount"]) if aggregate.get("ratingCount") else None,
                 "total_reviews": int(aggregate["reviewCount"]) if aggregate.get("reviewCount") else None,
@@ -248,7 +251,7 @@ def _extract_product_jsonld(html: str) -> dict:
             if isinstance(raw_reviews, dict):
                 raw_reviews = [raw_reviews]
             for r in raw_reviews:
-                text = _clean_text(r.get("reviewBody") or r.get("description"))
+                text = _clean_text(r.get("reviewBody") or r.get("description") or r.get("comment"))
                 if not text:
                     continue
                 author = r.get("author")
@@ -259,11 +262,69 @@ def _extract_product_jsonld(html: str) -> dict:
                     "rating": int(_normalize_rating(r_rating.get("ratingValue"))) if isinstance(r_rating, dict) else 0,
                     "review_rating": int(_normalize_rating(r_rating.get("ratingValue"))) if isinstance(r_rating, dict) else 0,
                     "reviewer_name": _clean_text(reviewer_name),
-                    "review_date": _clean_text(r.get("datePublished")),
+                    "review_date": _clean_text(r.get("datePublished") or r.get("date")),
                     "platform": "firstcry",
                 })
             result["reviews"] = reviews
+            logger.info("Selector succeeded: JSON-LD product data")
             return {k: v for k, v in result.items() if v not in (None, "", [])}
+    return {}
+
+
+def _extract_embedded_json_payload(html: str) -> dict:
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.find_all("script"):
+        content = script.string or script.get_text(" ", strip=True) or ""
+        if not content:
+            continue
+        payload = _safe_json_loads(content)
+        if not payload:
+            continue
+        for obj in _iter_json_objects(payload):
+            if not isinstance(obj, dict):
+                continue
+            obj_type = obj.get("@type")
+            type_matches = obj_type == "Product" or (isinstance(obj_type, list) and "Product" in obj_type)
+            if not type_matches:
+                if not any(
+                    key in obj
+                    for key in (
+                        "name",
+                        "productName",
+                        "title",
+                        "price",
+                        "current_price",
+                        "salePrice",
+                        "sellingPrice",
+                        "originalPrice",
+                        "mrp",
+                        "rating",
+                        "ratingValue",
+                        "averageRating",
+                        "productRating",
+                        "ratings",
+                        "reviewCount",
+                        "reviews",
+                        "totalReviews",
+                        "discountPercentage",
+                        "image",
+                    )
+                ):
+                    continue
+            result = {
+                "product_name": _clean_text(obj.get("name") or obj.get("productName") or obj.get("title")),
+                "product_image": obj.get("image") if isinstance(obj.get("image"), str) else (obj.get("image") or [None])[0],
+                "description": _clean_text(obj.get("description")),
+                "current_price": _normalize_price(obj.get("price") or obj.get("current_price") or obj.get("salePrice") or obj.get("sellingPrice")),
+                "original_price": _normalize_price(obj.get("originalPrice") or obj.get("original_price") or obj.get("mrp") or obj.get("strikethroughPrice")),
+                "discount_percentage": int(obj.get("discountPercentage")) if isinstance(obj.get("discountPercentage"), int) else None,
+                "rating": _normalize_rating(obj.get("rating") or obj.get("ratingValue") or obj.get("averageRating") or obj.get("productRating")),
+                "total_ratings": int(re.sub(r"[^\d]", "", str(obj.get("ratings") or obj.get("ratingCount") or obj.get("totalRatings") or ""))) if re.search(r"\d", str(obj.get("ratings") or obj.get("ratingCount") or obj.get("totalRatings") or "")) else None,
+                "total_reviews": int(re.sub(r"[^\d]", "", str(obj.get("reviews") or obj.get("reviewCount") or obj.get("totalReviews") or ""))) if re.search(r"\d", str(obj.get("reviews") or obj.get("reviewCount") or obj.get("totalReviews") or "")) else None,
+            }
+            if result.get("product_name") or result.get("current_price") or result.get("rating"):
+                logger.info("Selector succeeded: embedded JSON payload")
+                return {k: v for k, v in result.items() if v not in (None, "", [])}
     return {}
 
 
@@ -384,26 +445,115 @@ def _find_review_count_in_text(soup: BeautifulSoup) -> int | None:
     return None
 
 
-def _extract_reviews_by_selector(soup: BeautifulSoup, max_reviews: int) -> list[dict]:
+def _looks_like_review_text(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    banned = [
+        "ratings & reviews",
+        "tap on the stars to rate this product",
+        "write a review",
+        "be the first to review",
+        "product description",
+        "similar products",
+        "review this product",
+        "add a review",
+        "all reviews",
+        "customer reviews",
+        "review section",
+    ]
+    if any(token in lowered for token in banned) and len(cleaned.split()) <= 6:
+        return False
+    if any(token in lowered for token in ("button", "placeholder", "label", "heading", "title")):
+        return False
+    meaningful_words = re.findall(r"[A-Za-z]{2,}", cleaned)
+    return len(meaningful_words) >= 5
+
+
+def _extract_review_text(card) -> str:
+    for selector in [
+        ".review-text",
+        ".review-body",
+        ".review-content",
+        ".comment",
+        ".content",
+        ".message",
+        ".description",
+        ".text",
+    ]:
+        text_el = card.select_one(selector)
+        if text_el:
+            text = _clean_text(text_el.get_text(" ", strip=True))
+            if text:
+                return text
+    return _clean_text(card.get_text(" ", strip=True))
+
+
+def extract_reviews_from_html(html: str, max_reviews: int = 10) -> list[dict]:
+    soup = BeautifulSoup(html, "html.parser")
     reviews = []
+    seen = set()
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        payload = _safe_json_loads(script.string or "")
+        if not payload:
+            continue
+        for obj in _iter_json_objects(payload):
+            if not isinstance(obj, dict):
+                continue
+            raw_reviews = obj.get("review") or obj.get("reviews") or []
+            if isinstance(raw_reviews, dict):
+                raw_reviews = [raw_reviews]
+            for review in raw_reviews:
+                if not isinstance(review, dict):
+                    continue
+                text = _clean_text(review.get("reviewBody") or review.get("description") or review.get("comment") or review.get("text"))
+                if not text or not _looks_like_review_text(text):
+                    continue
+                author = review.get("author")
+                reviewer_name = author.get("name") if isinstance(author, dict) else (author or "")
+                rating_value = review.get("reviewRating") or review.get("rating") or {}
+                rating = int(_normalize_rating(rating_value.get("ratingValue") if isinstance(rating_value, dict) else rating_value)) if _normalize_rating(rating_value.get("ratingValue") if isinstance(rating_value, dict) else rating_value) else 0
+                signature = (text.lower(), _clean_text(reviewer_name).lower(), str(rating))
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                reviews.append({
+                    "review_text": text,
+                    "rating": rating,
+                    "review_rating": rating,
+                    "reviewer_name": _clean_text(reviewer_name),
+                    "review_date": _clean_text(review.get("datePublished") or review.get("date")),
+                    "platform": "firstcry",
+                })
+                if len(reviews) >= max_reviews:
+                    return reviews
+
     review_blocks = soup.select(
-        "[class*='review' i], [id*='review' i], [class*='rating-review' i], [class*='customer-review' i]"
+        "[class*='review' i], [id*='review' i], [class*='rating-review' i], [class*='customer-review' i], article, li"
     )
     for card in review_blocks:
-        text = _clean_text(card.get_text(" ", strip=True))
-        # skip generic nav/button-like short text and the whole-page container itself
-        if len(text) < 15 or len(text) > 1500:
+        text = _extract_review_text(card)
+        if not _looks_like_review_text(text):
             continue
         rating = 0
-        rating_el = card.select_one("[class*='star' i], [class*='rating' i]")
+        rating_el = card.select_one("[class*='star' i], [class*='rating' i], [data-rating]")
         if rating_el:
             rating = int(_normalize_rating(rating_el.get_text(" ", strip=True)))
+        reviewer_el = card.select_one("[class*='reviewer' i], [class*='author' i], [class*='user' i], [class*='name' i]")
+        review_date_el = card.select_one("time, [class*='date' i], [class*='posted' i]")
+        reviewer_name = _clean_text(reviewer_el.get_text(" ", strip=True)) if reviewer_el else ""
+        signature = (text.lower(), reviewer_name.lower(), str(rating))
+        if signature in seen:
+            continue
+        seen.add(signature)
         reviews.append({
             "review_text": text,
             "rating": rating,
             "review_rating": rating,
-            "reviewer_name": "",
-            "review_date": "",
+            "reviewer_name": reviewer_name,
+            "review_date": _clean_text(review_date_el.get_text(" ", strip=True)) if review_date_el else "",
             "platform": "firstcry",
         })
         if len(reviews) >= max_reviews:
@@ -452,40 +602,76 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
     soup = BeautifulSoup(html, "html.parser")
 
     jsonld = _extract_product_jsonld(html)
+    embedded = _extract_embedded_json_payload(html)
     microdata = _extract_microdata_product(soup)
 
-    product_name = jsonld.get("product_name") or _clean_text(
-        (soup.select_one("meta[property='og:title']") or {}).get("content", "") if soup.select_one("meta[property='og:title']") else ""
-    ) or _clean_text((soup.find("h1") or soup.new_tag("h1")).get_text(" ", strip=True))
+    merged = dict(jsonld)
+    if embedded:
+        for key, value in embedded.items():
+            if value not in (None, "", [], {}):
+                if key not in merged or merged.get(key) in (None, "", [], {}):
+                    merged[key] = value
+
+    product_name = (
+        merged.get("product_name")
+        or jsonld.get("product_name")
+        or _clean_text((soup.select_one("meta[property='og:title']") or {}).get("content", "") if soup.select_one("meta[property='og:title']") else "")
+        or _clean_text(soup.find("h1").get_text(" ", strip=True)) if soup.find("h1") else ""
+    )
+    if not _looks_like_valid_title(product_name):
+        for selector in [".product-card h2", ".product-card h1", ".product-card a", "[class*='product' i] h2", "[class*='product' i] h1", "h2", "h3"]:
+            candidate = soup.select_one(selector)
+            if not candidate:
+                continue
+            text = _clean_text(candidate.get_text(" ", strip=True))
+            if _looks_like_valid_title(text):
+                product_name = text
+                break
     if not _looks_like_valid_title(product_name):
         product_name = (query or "").strip()
 
-    product_image = jsonld.get("product_image")
+    product_image = merged.get("product_image") or jsonld.get("product_image")
     if not product_image:
-        og_img = soup.select_one("meta[property='og:image']")
-        if og_img and og_img.get("content"):
-            product_image = og_img["content"]
+        for selector in ["meta[property='og:image']", ".product-card img", "img#productImage", "img[alt*='product' i]", "img[src]"]:
+            image_el = soup.select_one(selector)
+            if not image_el:
+                continue
+            src = image_el.get("content") or image_el.get("src") or image_el.get("data-src")
+            if not src:
+                continue
+            alt = _clean_text(image_el.get("alt") or "")
+            if any(token in alt.lower() for token in ("logo", "icon", "sprite")):
+                continue
+            if any(token in str(src).lower() for token in ("logo", "icon", "sprite")):
+                continue
+            product_image = src
+            break
 
-    # --- price: JSON-LD > microdata > "₹X MRP ₹Y Z% OFF" pattern > price-labelled elements > text scan
-    current_price = jsonld.get("current_price") or microdata.get("current_price")
-    original_price = None
-    discount_percentage = None
+    current_price = merged.get("current_price") or microdata.get("current_price")
+    original_price = merged.get("original_price") or microdata.get("original_price")
+    discount_percentage = merged.get("discount_percentage")
 
     pattern_current, pattern_original, pattern_discount = _find_price_mrp_discount_pattern(soup)
     if current_price is None and pattern_current is not None:
         current_price = pattern_current
         original_price = pattern_original
         discount_percentage = pattern_discount
+        logger.info("Selector succeeded: price regex pattern")
+    elif current_price is None:
+        logger.info("Selector failed: price regex pattern")
 
     if current_price is None:
         price_els = soup.select(
-            "[class*='selling-price' i], [class*='offer-price' i], [class*='final-price' i], [class*='current-price' i]"
+            "[class*='selling-price' i], [class*='offer-price' i], [class*='final-price' i], [class*='current-price' i], .price, .finalPrice"
         )
         for el in price_els:
             value = _normalize_price(el.get_text(" ", strip=True))
             if value and value > 10:
                 current_price = value
+                logger.info("Selector succeeded: price element selector")
                 break
+        if current_price is None:
+            logger.info("Selector failed: price element selector")
 
     if original_price is None:
         mrp_els = soup.select("[class*='mrp' i], [class*='strike' i], [class*='original-price' i], del, s")
@@ -493,7 +679,10 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
             value = _normalize_price(el.get_text(" ", strip=True))
             if value and value > 10 and (current_price is None or value != current_price):
                 original_price = value
+                logger.info("Selector succeeded: original price element selector")
                 break
+        if original_price is None:
+            logger.info("Selector failed: original price element selector")
 
     prices_in_text = _find_prices_in_text(soup)
     if current_price is None and prices_in_text:
@@ -505,18 +694,17 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
 
     if discount_percentage is None:
         if current_price and original_price and original_price > current_price:
-            discount_percentage = int(round(((original_price - current_price) / original_price) * 100))
+            discount_percentage = int(((original_price - current_price) / original_price) * 100)
         else:
             disc_match = re.search(r"(\d{1,3})\s*%\s*off", soup.get_text(" ", strip=True), re.I)
             if disc_match:
                 discount_percentage = int(disc_match.group(1))
 
-    # --- rating / rating-count: JSON-LD > microdata > visible "X out of 5" text
-    rating = jsonld.get("rating") or microdata.get("rating") or _find_rating_in_text(soup)
-    total_ratings = jsonld.get("total_ratings") or microdata.get("total_ratings") or _find_review_count_in_text(soup)
-    total_reviews = jsonld.get("total_reviews")
+    rating = merged.get("rating") or microdata.get("rating") or _find_rating_in_text(soup)
+    total_ratings = merged.get("total_ratings") or microdata.get("total_ratings") or _find_review_count_in_text(soup)
+    total_reviews = merged.get("total_reviews")
 
-    description = jsonld.get("description")
+    description = merged.get("description")
     if not description:
         meta_desc = soup.select_one("meta[name='description']")
         description = _clean_text(meta_desc["content"]) if meta_desc and meta_desc.get("content") else ""
@@ -536,7 +724,28 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
         "product_url": product_url,
         "description": description,
         "product_price": _format_inr(current_price),
-        "reviews_from_jsonld": jsonld.get("reviews", []),
+        "reviews_from_jsonld": merged.get("reviews", []),
+    }
+
+
+def extract_firstcry_product_details(html: str, query: str | None = None) -> dict:
+    return extract_product_details(html, query=query)
+
+
+def extract_firstcry_product_metadata(html: str) -> dict:
+    details = extract_firstcry_product_details(html)
+    return {
+        "product_name": details.get("product_name"),
+        "product_image": details.get("product_image"),
+        "product_price": details.get("product_price"),
+        "product_rating": details.get("rating"),
+        "total_ratings": details.get("total_ratings"),
+        "total_reviews": details.get("total_reviews"),
+        "current_price": details.get("current_price"),
+        "original_price": details.get("original_price"),
+        "discount_percentage": details.get("discount_percentage"),
+        "description": details.get("description"),
+        "product_url": details.get("product_url"),
     }
 
 
@@ -568,8 +777,7 @@ def extract_reviews_from_page(driver: webdriver.Chrome, max_reviews: int) -> lis
     if jsonld.get("reviews"):
         return jsonld["reviews"][:max_reviews]
 
-    soup = BeautifulSoup(html, "html.parser")
-    return _extract_reviews_by_selector(soup, max_reviews)
+    return extract_reviews_from_html(html, max_reviews=max_reviews)
 
 
 # ----------------------------------------------------------------------------
@@ -606,6 +814,10 @@ def scrape_firstcry_reviews(product_name: str, max_reviews: int = 10, return_met
             if _looks_like_blocked_page(resp.text):
                 meta["blocked"] = True
             product_link, matched_title = _select_best_product_link(search_soup, query)
+            if product_link and matched_title:
+                title_score = _score_title_match(matched_title, query)
+                if title_score <= 0 and query:
+                    product_link, matched_title = None, None
         except Exception as exc:
             logger.info("requests-based search fetch failed: %s", exc)
 
