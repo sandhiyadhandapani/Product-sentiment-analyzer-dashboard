@@ -18,378 +18,514 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
-PAGE_TIMEOUT_SECONDS = 25
-ELEMENT_TIMEOUT_SECONDS = 15
-MAX_PAGES = 3
-MAX_RETRIES = 2
+# ----------------------------------------------------------------------------
+# Config
+# ----------------------------------------------------------------------------
+PAGE_TIMEOUT_SECONDS = 15
+ELEMENT_TIMEOUT_SECONDS = 8
+TOTAL_TIME_BUDGET_SECONDS = 20   # soft budget - we try to stay under this
+MAX_RETRIES = 1                 # keep it low so we don't blow the time budget
+
+BASE_URL = "https://www.firstcry.com"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+# Real firstcry product-detail URLs look like:
+#   /<brand>/<slug>/<numeric-id>/product-detail?sterm=...
+PRODUCT_LINK_TOKENS = ("/product-detail", "/p/", "/product/")
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def _build_driver(visible: bool = True) -> webdriver.Chrome | None:
+# ----------------------------------------------------------------------------
+# Selenium driver helpers
+# ----------------------------------------------------------------------------
+def _build_driver(headless: bool = True) -> webdriver.Chrome | None:
     chrome_options = Options()
-    if not visible or os.getenv("SELENIUM_HEADLESS") == "1":
+    if headless or os.getenv("SELENIUM_HEADLESS") == "1":
         chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument("--disable-plugins")
-    chrome_options.add_argument("--disable-translate")
-    chrome_options.add_argument("--disable-background-networking")
+    chrome_options.add_argument("--disable-popup-blocking")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-    chrome_options.add_experimental_option("prefs", {
-        "profile.default_content_setting_values.images": 2,
-        "profile.default_content_setting_values.stylesheets": 2,
-        "profile.default_content_setting_values.fonts": 2,
-        "profile.default_content_setting_values.notifications": 2,
-    })
+    chrome_options.add_argument(f"--user-agent={HEADERS['User-Agent']}")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    # NOTE: we deliberately do NOT disable images/CSS here - some sites lazy
+    # -load price/review blocks only once layout has settled.
     chrome_options.page_load_strategy = "eager"
 
     try:
-        return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     except Exception as exc:
-        logger.warning("FirstCry driver setup failed: %s", exc)
+        logger.warning("Driver setup via webdriver_manager failed: %s", exc)
         try:
-            return webdriver.Chrome(options=chrome_options)
+            driver = webdriver.Chrome(options=chrome_options)
         except Exception as fallback_exc:
-            logger.warning("FirstCry driver fallback failed: %s", fallback_exc)
+            logger.warning("Driver fallback failed: %s", fallback_exc)
             return None
 
+    # hide the obvious "navigator.webdriver" automation flag
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
+        )
+    except Exception:
+        pass
 
-def _wait_for_page(driver: webdriver.Chrome, selector: str | None = None, timeout: int = ELEMENT_TIMEOUT_SECONDS) -> None:
-    if not hasattr(driver, "find_element"):
-        return
-    if selector:
-        WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-    else:
+    driver.set_page_load_timeout(PAGE_TIMEOUT_SECONDS)
+    driver.set_script_timeout(PAGE_TIMEOUT_SECONDS)
+    return driver
+
+
+def _wait_body(driver: webdriver.Chrome, timeout: int = ELEMENT_TIMEOUT_SECONDS) -> None:
+    try:
         WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+    except Exception:
+        pass
 
 
-def _get_text_from_elements(elements) -> str:
-    if not elements:
-        return ""
-    parts = [element.get_text(" ", strip=True) for element in elements if element.get_text(" ", strip=True)]
-    return " ".join(" ".join(parts).split())
+def _wait_for_any_selector(driver: webdriver.Chrome, selectors: list[str], timeout: int = ELEMENT_TIMEOUT_SECONDS) -> bool:
+    """Wait until at least one of the given selectors appears, OR give up after timeout."""
+    end_time = time.time() + timeout
+    css = ", ".join(selectors)
+    while time.time() < end_time:
+        try:
+            if driver.find_elements(By.CSS_SELECTOR, css):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.4)
+    return False
 
 
+def _scroll_to_bottom(driver: webdriver.Chrome, steps: int = 4, pause: float = 0.4) -> None:
+    last_height = 0
+    for _ in range(steps):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(pause)
+        try:
+            new_height = driver.execute_script("return document.body.scrollHeight")
+        except Exception:
+            break
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+
+# ----------------------------------------------------------------------------
+# Small text / number normalizers
+# ----------------------------------------------------------------------------
 def _clean_text(raw_value: str | None) -> str:
     cleaned = re.sub(r"\s+", " ", (raw_value or "")).strip()
     return cleaned if len(cleaned) >= 2 else ""
 
 
-def _normalize_rating(raw_value: str | int | float | None) -> float:
+def _normalize_rating(raw_value) -> float:
     if raw_value is None:
         return 0.0
     if isinstance(raw_value, (int, float)):
         return round(float(raw_value), 1)
-
-    text = str(raw_value)
-    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    match = re.search(r"(\d+(?:\.\d+)?)", str(raw_value))
     if not match:
         return 0.0
-
     rating = float(match.group(1))
     if rating > 5:
         rating = round(rating / 10, 1)
     return round(rating, 1)
 
 
-def _normalize_price(raw_value: str | int | float | None) -> int | float | None:
+def _normalize_price(raw_value) -> float | None:
     if raw_value is None:
         return None
     if isinstance(raw_value, (int, float)):
         return float(raw_value)
-
-    text = str(raw_value)
-    match = re.search(r"(\d[\d,\.]*)", text)
+    match = re.search(r"(\d[\d,]*(?:\.\d+)?)", str(raw_value).replace(",", ""))
     if not match:
         return None
-
-    candidate = match.group(1)
-    digits = re.sub(r"[^0-9.]", "", candidate).replace(",", "")
-    if not digits:
+    try:
+        return float(match.group(1))
+    except ValueError:
         return None
-    return float(digits)
-
-
-def _normalize_discount(raw_value: str | int | float | None) -> int | None:
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, (int, float)):
-        return int(round(float(raw_value)))
-
-    text = str(raw_value)
-    match = re.search(r"(\d{1,3})", text.replace("%", ""))
-    if not match:
-        return None
-    return int(match.group(1))
-
-
-def _looks_like_blocked_page(soup: BeautifulSoup) -> bool:
-    text = " ".join(soup.stripped_strings).lower()
-    blocked_markers = ["captcha", "verify you are human", "robot", "access denied", "try again later", "temporarily unavailable"]
-    return any(marker in text for marker in blocked_markers)
-
-
-def _looks_like_valid_product_title(text: str | None) -> bool:
-    if not text:
-        return False
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    if not cleaned:
-        return False
-    lowered = cleaned.lower()
-    if len(cleaned) < 3 or any(token in lowered for token in ["search results", "results", "firstcry", "logo", "sign in", "signin", "cart", "home"]):
-        return False
-    return True
-
-
-def _normalize_image_url(raw_value: str | None, base_url: str = "https://www.firstcry.com") -> str | None:
-    if not raw_value:
-        return None
-    value = str(raw_value).strip()
-    if not value or value.startswith("data:image"):
-        return None
-    if value.startswith("//"):
-        value = f"https:{value}"
-    elif value.startswith("/"):
-        value = urljoin(base_url, value)
-    lowered = value.lower()
-    if any(marker in lowered for marker in ["logo", "sprite", "icon", "static"]) and "product" not in lowered:
-        return None
-    return value if lowered.startswith(("http://", "https://")) else None
 
 
 def _format_inr(value: float | int | None) -> str | None:
     if value is None:
         return None
-    digits = int(float(value))
-    if digits < 1000:
-        return f"₹{digits}"
-
-    value_str = str(digits)
-    if len(value_str) > 3:
-        last_three = value_str[-3:]
-        rest = value_str[:-3]
-        if len(rest) > 2:
-            mid = rest[-2:]
-            front = rest[:-2]
-            return f"₹{front},{mid},{last_three}"
-        return f"₹{rest},{last_three}"
-    return f"₹{value_str}"
+    digits = int(round(float(value)))
+    s = str(digits)
+    if len(s) <= 3:
+        return f"₹{s}"
+    last3, rest = s[-3:], s[:-3]
+    parts = []
+    while len(rest) > 2:
+        parts.insert(0, rest[-2:])
+        rest = rest[:-2]
+    if rest:
+        parts.insert(0, rest)
+    return f"₹{','.join(parts)},{last3}"
 
 
-def _score_title_match(title: str | None, query: str) -> int:
-    if not title:
-        return 0
-    title_tokens = set(re.findall(r"[a-z0-9]+", title.lower()))
-    query_tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
-    if not query_tokens:
-        return 0
-    return len(title_tokens & query_tokens)
+def _looks_like_valid_title(text: str | None) -> bool:
+    if not text:
+        return False
+    cleaned = _clean_text(text)
+    if len(cleaned) < 3:
+        return False
+    lowered = cleaned.lower()
+    banned = ["search results", "firstcry", "sign in", "signin", "cart", "wishlist", "my account"]
+    return not any(tok in lowered for tok in banned)
 
 
-def _extract_text_from_candidates(soup: BeautifulSoup, selectors: list[str]) -> str:
-    for selector in selectors:
-        element = soup.select_one(selector)
-        if element:
-            text = _clean_text(element.get_text(" ", strip=True))
-            if text:
-                return text
-    return ""
+def _looks_like_blocked_page(html: str) -> bool:
+    lowered = html.lower()
+    markers = ["captcha", "verify you are human", "access denied", "temporarily unavailable", "are you a robot"]
+    return any(m in lowered for m in markers)
 
 
-def _extract_firstcry_card_metadata(soup: BeautifulSoup) -> dict:
-    cards = soup.select(".product-card, .product-item, [class*='product']")
-    for card in cards:
-        title = None
-        for selector in ["h2 a", "h3 a", "a[title]", "a"]:
-            for element in card.select(selector):
-                text = _clean_text(element.get_text(" ", strip=True))
-                if _looks_like_valid_product_title(text):
-                    title = text
-                    break
-            if title:
-                break
+# ----------------------------------------------------------------------------
+# JSON-LD / embedded-state extraction (most reliable when present)
+# ----------------------------------------------------------------------------
+def _safe_json_loads(value: str):
+    try:
+        return json.loads(value)
+    except Exception:
+        try:
+            cleaned = re.sub(r"^\s*window\.[^=]+=", "", value)
+            cleaned = re.sub(r";\s*$", "", cleaned.strip())
+            return json.loads(cleaned)
+        except Exception:
+            return None
 
-        if not title:
+
+def _iter_json_objects(node):
+    if isinstance(node, dict):
+        yield node
+        for v in node.values():
+            yield from _iter_json_objects(v)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_json_objects(item)
+
+
+def _extract_product_jsonld(html: str) -> dict:
+    """Look for schema.org Product markup: name, image, offers.price, aggregateRating."""
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.select('script[type="application/ld+json"]'):
+        payload = _safe_json_loads(script.string or "")
+        if not payload:
             continue
+        for obj in _iter_json_objects(payload):
+            obj_type = obj.get("@type") if isinstance(obj, dict) else None
+            type_matches = obj_type == "Product" or (isinstance(obj_type, list) and "Product" in obj_type)
+            if not type_matches:
+                continue
 
-        image = None
-        for element in card.select("img[src], img[data-src], img[data-image]"):
-            raw_value = element.get("src") or element.get("data-src") or element.get("data-image")
-            normalized = _normalize_image_url(raw_value)
-            if normalized:
-                image = normalized
-                break
+            offers = obj.get("offers") or {}
+            if isinstance(offers, list):
+                offers = offers[0] if offers else {}
+            aggregate = obj.get("aggregateRating") or {}
 
-        price = None
-        for selector in [".price", "span.price", "div.price", "[class*='price']"]:
-            element = card.select_one(selector)
-            if element:
-                text = _clean_text(element.get_text(" ", strip=True))
-                if text:
-                    price = text
-                    break
-
-        rating = None
-        for selector in [".rating", "[class*='rating']", "[class*='star']"]:
-            element = card.select_one(selector)
-            if element:
-                text = _clean_text(element.get_text(" ", strip=True))
-                rating_value = _normalize_rating(text)
-                if rating_value:
-                    rating = rating_value
-                    break
-
-        return {
-            "product_name": title,
-            "product_image": image,
-            "product_price": price,
-            "product_rating": rating,
-        }
-
+            result = {
+                "product_name": _clean_text(obj.get("name")),
+                "product_image": obj.get("image") if isinstance(obj.get("image"), str) else (obj.get("image") or [None])[0],
+                "description": _clean_text(obj.get("description")),
+                "current_price": _normalize_price(offers.get("price")),
+                "rating": _normalize_rating(aggregate.get("ratingValue")) if aggregate else None,
+                "total_ratings": int(aggregate["ratingCount"]) if aggregate.get("ratingCount") else None,
+                "total_reviews": int(aggregate["reviewCount"]) if aggregate.get("reviewCount") else None,
+            }
+            reviews = []
+            raw_reviews = obj.get("review") or []
+            if isinstance(raw_reviews, dict):
+                raw_reviews = [raw_reviews]
+            for r in raw_reviews:
+                text = _clean_text(r.get("reviewBody") or r.get("description"))
+                if not text:
+                    continue
+                author = r.get("author")
+                reviewer_name = author.get("name") if isinstance(author, dict) else (author or "")
+                r_rating = r.get("reviewRating") or {}
+                reviews.append({
+                    "review_text": text,
+                    "rating": int(_normalize_rating(r_rating.get("ratingValue"))) if isinstance(r_rating, dict) else 0,
+                    "review_rating": int(_normalize_rating(r_rating.get("ratingValue"))) if isinstance(r_rating, dict) else 0,
+                    "reviewer_name": _clean_text(reviewer_name),
+                    "review_date": _clean_text(r.get("datePublished")),
+                    "platform": "firstcry",
+                })
+            result["reviews"] = reviews
+            return {k: v for k, v in result.items() if v not in (None, "", [])}
     return {}
 
 
-def extract_firstcry_product_details(html: str, query: str | None = None) -> dict:
+# ----------------------------------------------------------------------------
+# Fallback: scan raw text for price / rating patterns (works even if class
+# names change, since it doesn't rely on any CSS selector at all)
+# ----------------------------------------------------------------------------
+def _find_price_mrp_discount_pattern(soup: BeautifulSoup) -> tuple[float | None, float | None, int | None]:
+    """FirstCry (and most Indian e-commerce sites) render prices as a fixed
+    sequence: '₹976 MRP: ₹2579 62% OFF'. Matching that exact sequence is far
+    more reliable than scanning every ₹ amount on the page, since it can't
+    accidentally grab a bank-offer/EMI/variant price sitting elsewhere."""
+    text = soup.get_text(" ", strip=True)
+    pattern = re.compile(
+        r"₹\s?([\d,]+(?:\.\d{1,2})?)\D{0,30}?MRP\D{0,10}?₹\s?([\d,]+(?:\.\d{1,2})?)\D{0,20}?(\d{1,3})\s?%",
+        re.I,
+    )
+    match = pattern.search(text)
+    if match:
+        current = _normalize_price(match.group(1))
+        original = _normalize_price(match.group(2))
+        discount = int(match.group(3))
+        return current, original, discount
+
+    # fallback order: "MRP ₹2579" ... "₹976" ... "62% off" (MRP mentioned first)
+    pattern2 = re.compile(
+        r"MRP\D{0,10}?₹\s?([\d,]+(?:\.\d{1,2})?)\D{0,30}?₹\s?([\d,]+(?:\.\d{1,2})?)\D{0,20}?(\d{1,3})\s?%",
+        re.I,
+    )
+    match2 = pattern2.search(text)
+    if match2:
+        original = _normalize_price(match2.group(1))
+        current = _normalize_price(match2.group(2))
+        discount = int(match2.group(3))
+        return current, original, discount
+
+    return None, None, None
+
+
+JUNK_PRICE_CONTEXT = (
+    "minimum", "club cash", "cashback", "cash back", "shipping", "delivery",
+    "emi", "wallet", "earn", "redeem", "reverse pickup", "membership",
+    "orders above", "order value", "coupon", "gift card", "loyalty",
+    "installment", "installments", "per month", "starting at", "bank offer",
+    "instant discount", "instant cashback", "no cost emi",
+)
+
+
+def _find_prices_in_text(soup: BeautifulSoup) -> list[float]:
+    """Scan for ₹ amounts, but skip ones sitting inside boilerplate text
+    (footer notes like 'minimum ₹99 to place an order', club-cash notes,
+    EMI notes, etc.) by checking the *immediate* parent element's text
+    rather than the whole page's text blob."""
+    prices = []
+    for node in soup.find_all(string=re.compile(r"₹")):
+        parent = node.parent
+        context_parts = [str(node)]
+        p = parent
+        for _ in range(2):
+            if p is None:
+                break
+            context_parts.append(p.get_text(" ", strip=True))
+            p = p.parent
+        context = " ".join(context_parts).lower()
+        if any(junk in context for junk in JUNK_PRICE_CONTEXT):
+            continue
+        for match in re.finditer(r"₹\s?([\d,]+(?:\.\d{1,2})?)", str(node)):
+            value = _normalize_price(match.group(1))
+            if value and value > 10:  # ignore tiny junk amounts (e.g. "₹2 club cash")
+                prices.append(value)
+    return prices
+
+
+def _extract_microdata_product(soup: BeautifulSoup) -> dict:
+    """Many e-commerce sites embed schema.org microdata via itemprop=
+    attributes even when there's no full JSON-LD block. Cheap and reliable
+    when present."""
+    result: dict = {}
+
+    price_el = soup.select_one("[itemprop='price']")
+    if price_el:
+        value = price_el.get("content") or price_el.get_text(" ", strip=True)
+        price = _normalize_price(value)
+        if price:
+            result["current_price"] = price
+
+    rating_el = soup.select_one("[itemprop='ratingValue']")
+    if rating_el:
+        value = rating_el.get("content") or rating_el.get_text(" ", strip=True)
+        rating = _normalize_rating(value)
+        if rating:
+            result["rating"] = rating
+
+    count_el = soup.select_one("[itemprop='reviewCount'], [itemprop='ratingCount']")
+    if count_el:
+        value = count_el.get("content") or count_el.get_text(" ", strip=True)
+        digits = re.sub(r"[^\d]", "", value or "")
+        if digits:
+            result["total_ratings"] = int(digits)
+
+    return result
+
+
+def _find_rating_in_text(soup: BeautifulSoup) -> float | None:
+    text = soup.get_text(" ", strip=True)
+    match = re.search(r"\b([0-5](?:\.\d)?)\s*(?:out of|/)\s*5\b", text, re.I)
+    if match:
+        return _normalize_rating(match.group(1))
+    return None
+
+
+def _find_review_count_in_text(soup: BeautifulSoup) -> int | None:
+    text = soup.get_text(" ", strip=True)
+    match = re.search(r"([\d,]+)\s*(?:ratings?|reviews?)\b", text, re.I)
+    if match:
+        digits = re.sub(r"[^\d]", "", match.group(1))
+        return int(digits) if digits else None
+    return None
+
+
+def _extract_reviews_by_selector(soup: BeautifulSoup, max_reviews: int) -> list[dict]:
+    reviews = []
+    review_blocks = soup.select(
+        "[class*='review' i], [id*='review' i], [class*='rating-review' i], [class*='customer-review' i]"
+    )
+    for card in review_blocks:
+        text = _clean_text(card.get_text(" ", strip=True))
+        # skip generic nav/button-like short text and the whole-page container itself
+        if len(text) < 15 or len(text) > 1500:
+            continue
+        rating = 0
+        rating_el = card.select_one("[class*='star' i], [class*='rating' i]")
+        if rating_el:
+            rating = int(_normalize_rating(rating_el.get_text(" ", strip=True)))
+        reviews.append({
+            "review_text": text,
+            "rating": rating,
+            "review_rating": rating,
+            "reviewer_name": "",
+            "review_date": "",
+            "platform": "firstcry",
+        })
+        if len(reviews) >= max_reviews:
+            break
+    return reviews
+
+
+# ----------------------------------------------------------------------------
+# Product link selection from a search-results page
+# ----------------------------------------------------------------------------
+def _score_title_match(title: str, query: str) -> int:
+    title_tokens = set(re.findall(r"[a-z0-9]+", title.lower()))
+    query_tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+    return len(title_tokens & query_tokens)
+
+
+def _select_best_product_link(soup: BeautifulSoup, query: str) -> tuple[str | None, str | None]:
+    candidates: list[tuple[int, str, str]] = []
+    seen_hrefs = set()
+    for anchor in soup.select("a[href]"):
+        href = (anchor.get("href") or "").strip()
+        text = _clean_text(anchor.get("title") or anchor.get_text(" ", strip=True))
+        if not href or href in seen_hrefs:
+            continue
+        if not any(token in href.lower() for token in PRODUCT_LINK_TOKENS):
+            continue
+        if not text or not _looks_like_valid_title(text):
+            continue
+        seen_hrefs.add(href)
+        score = _score_title_match(text, query)
+        candidates.append((score, text, href))
+
+    if not candidates:
+        return None, None
+
+    candidates.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
+    best_score, best_title, best_href = candidates[0]
+    full_url = best_href if best_href.startswith("http") else urljoin(BASE_URL, best_href)
+    return full_url, best_title
+
+
+# ----------------------------------------------------------------------------
+# Product page extraction (combines JSON-LD -> selectors -> raw text scan)
+# ----------------------------------------------------------------------------
+def extract_product_details(html: str, query: str | None = None) -> dict:
     soup = BeautifulSoup(html, "html.parser")
-    card_metadata = _extract_firstcry_card_metadata(soup)
 
-    product_name = card_metadata.get("product_name") or _extract_text_from_candidates(
-        soup,
-        ["meta[property='og:title']", "h1", "h2", "[class*='product-name']"],
-    )
-    if not _looks_like_valid_product_title(product_name):
-        product_name = None
+    jsonld = _extract_product_jsonld(html)
+    microdata = _extract_microdata_product(soup)
 
-    product_image = None
-    for selector in ["meta[property='og:image']", "img[src]", "img[data-src]", "img[data-image]"]:
-        for element in soup.select(selector):
-            value = element.get("content") if element.name == "meta" else element.get("src") or element.get("data-src") or element.get("data-image")
-            normalized = _normalize_image_url(value)
-            if normalized:
-                product_image = normalized
-                break
-        if product_image:
-            break
+    product_name = jsonld.get("product_name") or _clean_text(
+        (soup.select_one("meta[property='og:title']") or {}).get("content", "") if soup.select_one("meta[property='og:title']") else ""
+    ) or _clean_text((soup.find("h1") or soup.new_tag("h1")).get_text(" ", strip=True))
+    if not _looks_like_valid_title(product_name):
+        product_name = (query or "").strip()
 
-    current_price = None
+    product_image = jsonld.get("product_image")
+    if not product_image:
+        og_img = soup.select_one("meta[property='og:image']")
+        if og_img and og_img.get("content"):
+            product_image = og_img["content"]
+
+    # --- price: JSON-LD > microdata > "₹X MRP ₹Y Z% OFF" pattern > price-labelled elements > text scan
+    current_price = jsonld.get("current_price") or microdata.get("current_price")
     original_price = None
-    price_elements = soup.select(".price, .current-price, .offer-price, .final-price, .mrp, .original-price, [class*='price']")
-    for element in price_elements:
-        text = _clean_text(element.get_text(" ", strip=True))
-        if not text:
-            continue
-        lower_text = text.lower()
-        if any(marker in lower_text for marker in ["rating", "review", "ratings", "reviews"]):
-            continue
-
-        if any(marker in lower_text for marker in ["mrp", "original", "strike"]):
-            price_value = _normalize_price(text)
-            if price_value is not None and original_price is None:
-                original_price = float(price_value)
-            continue
-
-        price_value = _normalize_price(text)
-        if price_value is None:
-            continue
-        if current_price is None:
-            current_price = float(price_value)
-            break
-
-    if current_price is None and price_elements:
-        for element in price_elements:
-            text = _clean_text(element.get_text(" ", strip=True))
-            price_value = _normalize_price(text)
-            if price_value is not None:
-                current_price = price_value
-                break
-
-    if original_price is None and current_price is not None:
-        fallback_price = None
-        for element in price_elements:
-            text = _clean_text(element.get_text(" ", strip=True))
-            if text and text.lower().startswith("₹"):
-                price_value = _normalize_price(text)
-                if price_value is not None and price_value != current_price:
-                    fallback_price = price_value
-                    break
-        if fallback_price is not None:
-            original_price = fallback_price
-
-    rating = None
-    for selector in [".rating", "[class*='rating']", "[class*='star']"]:
-        element = soup.select_one(selector)
-        if element:
-            rating_value = _normalize_rating(element.get_text(" ", strip=True))
-            if rating_value:
-                rating = rating_value
-                break
-
-    total_ratings = None
-    for selector in [".rating-count", "[class*='rating-count']", ".ratings", "[class*='ratings']", ".review-count", "[class*='review-count']"]:
-        element = soup.select_one(selector)
-        if element:
-            text = _clean_text(element.get_text(" ", strip=True))
-            match = re.search(r"(\d[\d,]*)", text.replace(",", ""))
-            if match:
-                total_ratings = int(match.group(1))
-                break
-
-    total_reviews = None
-    for selector in [".review-count", "[class*='review-count']", ".reviews", "[class*='reviews']", ".customer-reviews", "[class*='customer-reviews']"]:
-        element = soup.select_one(selector)
-        if element:
-            text = _clean_text(element.get_text(" ", strip=True))
-            match = re.search(r"(\d[\d,]*)", text.replace(",", ""))
-            if match:
-                total_reviews = int(match.group(1))
-                break
-
-    description = _extract_text_from_candidates(
-        soup,
-        ["meta[name='description']", "meta[property='og:description']", ".product-description", "[class*='description']"],
-    )
-    if not description:
-        description = _clean_text(_extract_text_from_candidates(soup, ["p"]))
-
     discount_percentage = None
-    for selector in [".discount", "[class*='discount']", ".off", "[class*='off']"]:
-        element = soup.select_one(selector)
-        if element:
-            discount_value = _normalize_discount(element.get_text(" ", strip=True))
-            if discount_value is not None:
-                discount_percentage = discount_value
+
+    pattern_current, pattern_original, pattern_discount = _find_price_mrp_discount_pattern(soup)
+    if current_price is None and pattern_current is not None:
+        current_price = pattern_current
+        original_price = pattern_original
+        discount_percentage = pattern_discount
+
+    if current_price is None:
+        price_els = soup.select(
+            "[class*='selling-price' i], [class*='offer-price' i], [class*='final-price' i], [class*='current-price' i]"
+        )
+        for el in price_els:
+            value = _normalize_price(el.get_text(" ", strip=True))
+            if value and value > 10:
+                current_price = value
                 break
 
-    if discount_percentage is None and current_price is not None and original_price is not None and original_price > current_price:
-        discount_percentage = int(round(((original_price - current_price) / original_price) * 100))
-
-    product_url = None
-    for selector in ["meta[property='og:url']", "link[rel='canonical']", "a[href*='/p/']", "a[href*='/product/']"]:
-        element = soup.select_one(selector)
-        if element:
-            value = element.get("content") if element.name == "meta" else element.get("href")
-            if value:
-                if value.startswith("/"):
-                    value = urljoin("https://www.firstcry.com", value)
-                product_url = value
+    if original_price is None:
+        mrp_els = soup.select("[class*='mrp' i], [class*='strike' i], [class*='original-price' i], del, s")
+        for el in mrp_els:
+            value = _normalize_price(el.get_text(" ", strip=True))
+            if value and value > 10 and (current_price is None or value != current_price):
+                original_price = value
                 break
 
-    if not product_name and query:
-        product_name = query.strip()
+    prices_in_text = _find_prices_in_text(soup)
+    if current_price is None and prices_in_text:
+        current_price = min(prices_in_text)
+    if original_price is None and prices_in_text and len(set(prices_in_text)) > 1:
+        higher = max(p for p in prices_in_text if current_price is None or p >= current_price)
+        if current_price and higher > current_price:
+            original_price = higher
 
-    normalized_product_name = _clean_text(product_name)
-    if not normalized_product_name and query:
-        normalized_product_name = query.strip()
+    if discount_percentage is None:
+        if current_price and original_price and original_price > current_price:
+            discount_percentage = int(round(((original_price - current_price) / original_price) * 100))
+        else:
+            disc_match = re.search(r"(\d{1,3})\s*%\s*off", soup.get_text(" ", strip=True), re.I)
+            if disc_match:
+                discount_percentage = int(disc_match.group(1))
+
+    # --- rating / rating-count: JSON-LD > microdata > visible "X out of 5" text
+    rating = jsonld.get("rating") or microdata.get("rating") or _find_rating_in_text(soup)
+    total_ratings = jsonld.get("total_ratings") or microdata.get("total_ratings") or _find_review_count_in_text(soup)
+    total_reviews = jsonld.get("total_reviews")
+
+    description = jsonld.get("description")
+    if not description:
+        meta_desc = soup.select_one("meta[name='description']")
+        description = _clean_text(meta_desc["content"]) if meta_desc and meta_desc.get("content") else ""
+
+    canonical = soup.select_one("link[rel='canonical']")
+    product_url = canonical["href"] if canonical and canonical.get("href") else None
 
     return {
-        "product_name": normalized_product_name,
+        "product_name": _clean_text(product_name) or (query or "").strip(),
         "current_price": current_price,
         "original_price": original_price,
         "discount_percentage": discount_percentage,
@@ -398,515 +534,176 @@ def extract_firstcry_product_details(html: str, query: str | None = None) -> dic
         "total_reviews": total_reviews,
         "product_image": product_image,
         "product_url": product_url,
-        "description": _clean_text(description),
+        "description": description,
         "product_price": _format_inr(current_price),
+        "reviews_from_jsonld": jsonld.get("reviews", []),
     }
 
 
-def extract_firstcry_product_metadata(html: str) -> dict:
-    details = extract_firstcry_product_details(html)
-    product_price = details.get("product_price")
-    if product_price is None and details.get("current_price") is not None:
-        product_price = _format_inr(details['current_price'])
-    return {
-        "product_name": details.get("product_name"),
-        "product_image": details.get("product_image"),
-        "product_price": product_price,
-        "product_rating": details.get("rating"),
-        "total_ratings": details.get("total_ratings"),
-        "current_price": details.get("current_price"),
-        "original_price": details.get("original_price"),
-        "discount_percentage": details.get("discount_percentage"),
-        "description": details.get("description"),
-        "product_url": details.get("product_url"),
-    }
-
-
-def _extract_reviewer_name(card: BeautifulSoup) -> str:
-    for selector in [".reviewer-name", ".user-name", ".author", "[class*='name']", "span"]:
-        element = card.select_one(selector)
-        if element:
-            text = _clean_text(element.get_text(" ", strip=True))
-            if text and len(text) < 80:
-                return text
-    return ""
-
-
-def _extract_review_date(card: BeautifulSoup) -> str:
-    for selector in [".review-date", ".date", ".posted-on", "[class*='date']"]:
-        element = card.select_one(selector)
-        if element:
-            text = _clean_text(element.get_text(" ", strip=True))
-            if text:
-                return text
-    return ""
-
-
-def _extract_firstcry_review_text(card: BeautifulSoup) -> str:
-    selectors = [".review-text", ".comment", ".review-content", "p", "span"]
-    for selector in selectors:
-        text = _get_text_from_elements(card.select(selector))
-        if text and len(text) > 8:
-            return _clean_text(text)
-    return ""
-
-
-def _extract_firstcry_review_rating(card: BeautifulSoup) -> int:
-    for selector in [".review-rating", ".rating", "[class*='rating']", "span"]:
-        text = _get_text_from_elements(card.select(selector))
-        rating = _normalize_rating(text)
-        if rating:
-            return int(rating)
-    return 0
-
-
-def _safe_json_loads(value: str) -> dict | list | None:
-    try:
-        return json.loads(value)
-    except Exception:
-        try:
-            cleaned = re.sub(r"^\s*window\.[^=]+=", "", value)
-            cleaned = re.sub(r";\s*$", "", cleaned)
-            return json.loads(cleaned)
-        except Exception:
-            return None
-
-
-def _walk_for_review_objects(node: object) -> list[dict]:
-    reviews: list[dict] = []
-    if isinstance(node, dict):
-        if "reviewBody" in node and ("author" in node or "reviewer_name" in node or "user" in node):
-            reviews.append(node)
-        for value in node.values():
-            reviews.extend(_walk_for_review_objects(value))
-    elif isinstance(node, list):
-        for item in node:
-            reviews.extend(_walk_for_review_objects(item))
-    return reviews
-
-
-def _extract_reviews_from_json_ld(html: str, max_reviews: int = 10) -> list[dict]:
-    soup = BeautifulSoup(html, "html.parser")
-    result: list[dict] = []
-    for script in soup.select('script[type="application/ld+json"], script[type="application/json"]'):
-        payload = _safe_json_loads(script.string or "")
-        if not payload:
-            continue
-        result.extend(_walk_for_review_objects(payload))
-        if len(result) >= max_reviews:
-            break
-    return result[:max_reviews]
-
-
-def _extract_reviews_from_embedded_json(html: str, max_reviews: int = 10) -> list[dict]:
-    result: list[dict] = []
-    patterns = [
-        r"window\.__INITIAL_STATE__\s*=\s*(\{.*?\});",
-        r"window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});",
-        r"window\.__SSR_DATA__\s*=\s*(\{.*?\});",
-        r"window\.__NEXT_DATA__\s*=\s*(\{.*?\});",
-    ]
-    for pattern in patterns:
-        for match in re.finditer(pattern, html, re.S):
-            payload = _safe_json_loads(match.group(1))
-            if not payload:
-                continue
-            result.extend(_walk_for_review_objects(payload))
-            if len(result) >= max_reviews:
-                return result[:max_reviews]
-    return result[:max_reviews]
-
-
-def _extract_review_data_from_json(review: dict) -> dict:
-    text = review.get("reviewBody") or review.get("review_text") or review.get("text") or review.get("comment") or ""
-    author = review.get("author") or review.get("reviewer_name") or review.get("user") or {}
-    if isinstance(author, dict):
-        reviewer_name = author.get("name") or author.get("author") or author.get("reviewer_name") or ""
-    elif isinstance(author, str):
-        reviewer_name = author
-    else:
-        reviewer_name = ""
-
-    rating = review.get("reviewRating", review.get("rating") or review.get("review_rating") or 0)
-    if isinstance(rating, dict):
-        rating = rating.get("ratingValue") or rating.get("value") or 0
-    return {
-        "review_text": _clean_text(text),
-        "rating": int(_normalize_rating(rating)),
-        "review_rating": int(_normalize_rating(rating)),
-        "reviewer_name": _clean_text(reviewer_name),
-        "review_date": _clean_text(review.get("datePublished") or review.get("reviewDate") or review.get("date") or ""),
-        "platform": "firstcry",
-    }
-
-
-def _load_visible_reviews(driver: webdriver.Chrome, max_attempts: int = 6) -> None:
-    for attempt in range(max_attempts):
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(0.6)
-        try:
-            _wait_for_page(driver, ".review-card, .review-item, .review-block, .review-card__content, .review-section, [class*='review']", timeout=5)
-            return
-        except Exception:
-            continue
-
-
-def _click_review_tab(driver: webdriver.Chrome) -> bool:
+def extract_reviews_from_page(driver: webdriver.Chrome, max_reviews: int) -> list[dict]:
+    """Try clicking a reviews tab, scroll to load lazy content, then extract."""
     try:
         buttons = driver.find_elements(
             By.CSS_SELECTOR,
-            "a[href*='review'], button[id*='review'], button[class*='review'], [data-tab*='review'], [data-target*='review']",
+            "a[href*='review' i], button[id*='review' i], button[class*='review' i], "
+            "[data-tab*='review' i], [data-target*='review' i]",
         )
-        for button in buttons:
+        for button in buttons[:3]:
             try:
                 if button.is_displayed() and button.is_enabled():
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", button)
                     button.click()
-                    time.sleep(0.6)
-                    return True
+                    time.sleep(0.8)
+                    break
             except Exception:
                 continue
     except Exception:
         pass
-    return False
+
+    _scroll_to_bottom(driver, steps=5, pause=0.5)
+    _wait_for_any_selector(driver, ["[class*='review' i]", "[id*='review' i]"], timeout=4)
+
+    html = driver.page_source
+    jsonld = _extract_product_jsonld(html)
+    if jsonld.get("reviews"):
+        return jsonld["reviews"][:max_reviews]
+
+    soup = BeautifulSoup(html, "html.parser")
+    return _extract_reviews_by_selector(soup, max_reviews)
 
 
-def _select_best_product_link(soup: BeautifulSoup, query: str) -> tuple[str | None, str | None]:
-    candidates: list[tuple[int, str, str]] = []
-    for anchor in soup.select("a[href]"):
-        href = anchor.get("href") or ""
-        text = _clean_text(anchor.get_text(" ", strip=True))
-        if not href or not text:
-            continue
-        if any(marker in href.lower() for marker in ["javascript:", "mailto:", "tel:"]):
-            continue
-        if "/p/" in href.lower() or "/product/" in href.lower() or "/baby" in href.lower():
-            score = _score_title_match(text, query)
-            if score > 0 or _looks_like_valid_product_title(text):
-                candidates.append((score, text, href))
-
-    if not candidates:
-        return None, None
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    href = candidates[0][2]
-    return (href if href.startswith("http") else f"https://www.firstcry.com{href}", candidates[0][1])
-
-
-def _iter_review_pages(driver: webdriver.Chrome, soup: BeautifulSoup, max_pages: int) -> list[BeautifulSoup]:
-    pages = [soup]
-    current_page = 1
-    while current_page < max_pages:
-        next_url = None
-        for link in soup.select("a[href]"):
-            href = (link.get("href") or "").strip()
-            if not href or href.startswith("javascript"):
-                continue
-            lower_href = href.lower()
-            if "review" in lower_href or "page" in lower_href or "next" in lower_href:
-                next_url = href
-                break
-        if not next_url:
-            break
-        if not next_url.startswith("http"):
-            next_url = f"https://www.firstcry.com{next_url}"
-        try:
-            driver.get(next_url)
-            _wait_for_page(driver, "body")
-            _load_visible_reviews(driver)
-            current_page += 1
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            pages.append(soup)
-        except Exception as exc:  # pragma: no cover - defensive handling
-            logger.warning("FirstCry review pagination failed: %s", exc)
-            break
-    return pages
-
-
-def _find_product_id_from_html(html: str) -> str | None:
-    m = re.search(r"data-product-id\s*=\s*\"?(\d+)\"?", html)
-    if m:
-        return m.group(1)
-    m = re.search(r"productId\"?\s*[:=]\s*\"?(\d+)\"?", html)
-    if m:
-        return m.group(1)
-    m = re.search(r"product_id\"?\s*[:=]\s*\"?(\d+)\"?", html)
-    if m:
-        return m.group(1)
-    return None
-
-
-def _find_candidate_review_urls(html: str, base_url: str = "https://www.firstcry.com") -> list[str]:
-    urls: list[str] = []
-    for match in re.finditer(r'(https?://[^"\s]+|/[^\'">\s]+)', html):
-        url = match.group(1)
-        lower = url.lower()
-        if any(token in lower for token in ["review", "rating", "ratings", "comments", "reviews"]):
-            if url.startswith("/"):
-                url = urljoin(base_url, url)
-            if url not in urls:
-                urls.append(url)
-    return urls
-
-
-def _fetch_reviews_via_requests(product_url: str | None, html: str, max_reviews: int = 10) -> list[dict]:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json, text/javascript, text/html, */*;q=0.01",
-    }
-    reviews: list[dict] = []
-    json_candidates = _extract_reviews_from_json_ld(html, max_reviews=max_reviews)
-    if json_candidates:
-        for item in json_candidates:
-            parsed = _extract_review_data_from_json(item)
-            if parsed["review_text"]:
-                reviews.append(parsed)
-                if len(reviews) >= max_reviews:
-                    return reviews[:max_reviews]
-
-    json_candidates = _extract_reviews_from_embedded_json(html, max_reviews=max_reviews)
-    if json_candidates:
-        for item in json_candidates:
-            parsed = _extract_review_data_from_json(item)
-            if parsed["review_text"]:
-                reviews.append(parsed)
-                if len(reviews) >= max_reviews:
-                    return reviews[:max_reviews]
-
-    product_id = _find_product_id_from_html(html)
-    candidate_urls = []
-    if product_id:
-        candidate_urls.extend([
-            f"https://www.firstcry.com/mweb/v2/product/ratingReviews?productId={product_id}&page=1",
-            f"https://www.firstcry.com/api/product/{product_id}/reviews?page=1",
-            f"https://www.firstcry.com/product_reviews/{product_id}?page=1",
-        ])
-
-    candidate_urls.extend(_find_candidate_review_urls(html))
-
-    tried = set()
-    for url in candidate_urls:
-        if len(reviews) >= max_reviews:
-            break
-        if not url or url in tried:
-            continue
-        tried.add(url)
-        try:
-            resp = requests.get(url, headers=headers, timeout=10)
-            content_type = resp.headers.get("content-type", "")
-            text = resp.text
-            if "application/json" in content_type or text.strip().startswith("{") or text.strip().startswith("["):
-                payload = _safe_json_loads(text)
-                if payload:
-                    found = _walk_for_review_objects(payload)
-                    for item in found:
-                        parsed = _extract_review_data_from_json(item)
-                        if parsed["review_text"]:
-                            reviews.append(parsed)
-                            if len(reviews) >= max_reviews:
-                                break
-            else:
-                soup = BeautifulSoup(text, "html.parser")
-                for card in soup.select(".review-card, .review-item, .review-block, [class*='review']"):
-                    review_text = _extract_firstcry_review_text(card)
-                    rating = _extract_firstcry_review_rating(card)
-                    reviewer_name = _extract_reviewer_name(card)
-                    review_date = _extract_review_date(card)
-                    if review_text:
-                        reviews.append(
-                            {
-                                "review_text": review_text,
-                                "rating": rating or 0,
-                                "review_rating": rating or 0,
-                                "reviewer_name": reviewer_name,
-                                "review_date": review_date,
-                                "platform": "firstcry",
-                            }
-                        )
-                        if len(reviews) >= max_reviews:
-                            break
-        except Exception:
-            continue
-
-    return reviews[:max_reviews]
-
-
-def scrape_firstcry_reviews(product_name: str, max_reviews: int = 10, return_metadata: bool = False) -> list[dict] | dict:
-    reviews: list[dict] = []
-    meta: dict[str, object] = {
+# ----------------------------------------------------------------------------
+# Main entry point
+# ----------------------------------------------------------------------------
+def scrape_firstcry_reviews(product_name: str, max_reviews: int = 10, return_metadata: bool = False, headless: bool = True):
+    start_time = time.time()
+    meta: dict = {
         "platform": "firstcry",
-        "scraper": "scrape_firstcry_reviews",
         "search_url": "",
         "product_url": "",
-        "review_url": "",
-        "page_title": "",
         "html_length": 0,
+        "blocked": False,
+        "success": False,
+        "message": "",
         "review_blocks_detected": 0,
         "extracted_reviews_count": 0,
-        "blocked": False,
-        "message": "",
-        "success": False,
+        "elapsed_seconds": 0,
     }
+    reviews: list[dict] = []
+    query = (product_name or "").strip()
+    search_url = f"{BASE_URL}/search?q={quote(query)}"
+    meta["search_url"] = search_url
+
     driver: webdriver.Chrome | None = None
-
-    for attempt in range(MAX_RETRIES):
+    try:
+        # 1) get product link — try plain requests first (search page is
+        #    largely server-rendered on firstcry, so this is fast and cheap)
+        product_link, matched_title = None, None
         try:
-            # prepare search URL and try a requests-based fetch first (faster, avoids webdriver)
-            search_query = (product_name or "").strip()
-            search_url = f"https://www.firstcry.com/search?q={quote(search_query)}"
-            meta["search_url"] = search_url
+            resp = requests.get(search_url, headers=HEADERS, timeout=8)
+            search_soup = BeautifulSoup(resp.text, "html.parser")
+            meta["html_length"] = len(resp.text)
+            if _looks_like_blocked_page(resp.text):
+                meta["blocked"] = True
+            product_link, matched_title = _select_best_product_link(search_soup, query)
+        except Exception as exc:
+            logger.info("requests-based search fetch failed: %s", exc)
 
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            }
+        # 2) if requests didn't find a link (JS-rendered / blocked), fall back
+        #    to selenium for the search page too
+        if not product_link:
+            driver = _build_driver(headless=headless)
+            if driver is None:
+                meta["message"] = "Could not start Chrome driver."
+                return {"reviews": [], "meta": meta} if return_metadata else []
+            driver.get(search_url)
+            _wait_body(driver)
+            _wait_for_any_selector(driver, PRODUCT_LINK_TOKENS_AS_CSS(), timeout=6)
+            html = driver.page_source
+            meta["html_length"] = len(html)
+            if _looks_like_blocked_page(html):
+                meta["blocked"] = True
+                meta["message"] = "FirstCry search page looked blocked (captcha/robot check)."
+                return {"reviews": [], "meta": meta} if return_metadata else []
+            search_soup = BeautifulSoup(html, "html.parser")
+            product_link, matched_title = _select_best_product_link(search_soup, query)
 
+        if not product_link:
+            meta["message"] = "Could not find a matching product link on the search results page."
+            return {"reviews": [], "meta": meta} if return_metadata else []
+
+        meta["product_url"] = product_link
+
+        # 3) load the product-detail page with selenium (it's JS-rendered on
+        #    firstcry — plain requests returns an empty shell for this page)
+        if driver is None:
+            driver = _build_driver(headless=headless)
+            if driver is None:
+                meta["message"] = "Could not start Chrome driver for product page."
+                return {"reviews": [], "meta": meta} if return_metadata else []
+
+        driver.get(product_link)
+        _wait_body(driver)
+        _wait_for_any_selector(driver, ["[class*='price' i]", "h1", "[class*='rating' i]"], timeout=8)
+        product_html = driver.page_source
+        meta["html_length"] = len(product_html)
+
+        if _looks_like_blocked_page(product_html):
+            meta["blocked"] = True
+            meta["message"] = "FirstCry product page looked blocked (captcha/robot check)."
+            return {"reviews": [], "meta": meta} if return_metadata else []
+
+        details = extract_product_details(product_html, query=query)
+        if matched_title and _looks_like_valid_title(matched_title):
+            details["product_name"] = matched_title
+        meta.update({k: v for k, v in details.items() if k != "reviews_from_jsonld" and v not in (None, "")})
+
+        # 4) reviews: JSON-LD first (already inside `details`), then live-page scan
+        reviews = details.get("reviews_from_jsonld") or []
+        if len(reviews) < max_reviews and time.time() - start_time < TOTAL_TIME_BUDGET_SECONDS:
+            page_reviews = extract_reviews_from_page(driver, max_reviews - len(reviews))
+            reviews.extend(page_reviews)
+
+        # If the page never exposed an aggregate rating (no JSON-LD, no
+        # microdata, no "X out of 5" text), estimate one from the sample of
+        # reviews we did manage to pull, and say so clearly - this is NOT
+        # the same as the site's real aggregate rating.
+        if meta.get("rating") is None and reviews:
+            sample_ratings = [r["rating"] for r in reviews if r.get("rating")]
+            if sample_ratings:
+                meta["rating"] = round(sum(sample_ratings) / len(sample_ratings), 1)
+                meta["rating_source"] = "estimated_from_sample_reviews"
+
+        meta["review_blocks_detected"] = len(reviews)
+        meta["extracted_reviews_count"] = len(reviews)
+        meta["success"] = True
+        meta["message"] = (
+            "Scraping completed successfully."
+            if reviews
+            else "Product details were found, but no reviews were extracted."
+        )
+        return {"reviews": reviews[:max_reviews], "meta": meta} if return_metadata else reviews[:max_reviews]
+
+    except (TimeoutException, WebDriverException) as exc:
+        meta["message"] = f"Selenium error: {exc}"
+        return {"reviews": reviews[:max_reviews], "meta": meta} if return_metadata else reviews[:max_reviews]
+    except Exception as exc:
+        logger.exception("Unexpected scraping failure")
+        meta["message"] = f"Unexpected error: {exc}"
+        return {"reviews": reviews[:max_reviews], "meta": meta} if return_metadata else reviews[:max_reviews]
+    finally:
+        meta["elapsed_seconds"] = round(time.time() - start_time, 1)
+        if driver:
             try:
-                resp = requests.get(search_url, headers=headers, timeout=10)
-                search_html = resp.text
-                meta["page_title"] = ""
-                meta["html_length"] = len(search_html)
-                search_soup = BeautifulSoup(search_html, "html.parser")
-                # find product link from search results
-                selected_link, selected_name = _select_best_product_link(search_soup, search_query)
-                product_link = selected_link or extract_firstcry_product_metadata(search_html).get("product_url")
-                if product_link:
-                    # fetch product page HTML via requests and attempt JSON/XHR extraction
-                    try:
-                        prod_resp = requests.get(product_link, headers=headers, timeout=10)
-                        prod_html = prod_resp.text
-                        meta.update({k: v for k, v in extract_firstcry_product_metadata(prod_html).items() if v is not None})
-                        reviews_via_requests = _fetch_reviews_via_requests(product_link, prod_html, max_reviews=max_reviews)
-                        if reviews_via_requests:
-                            meta["extracted_reviews_count"] = len(reviews_via_requests)
-                            meta.update({"blocked": False, "message": "Scraping completed via requests.", "success": True})
-                            return {"reviews": reviews_via_requests[:max_reviews], "meta": meta} if return_metadata else reviews_via_requests[:max_reviews]
-                    except Exception:
-                        pass
+                driver.quit()
             except Exception:
-                # if requests fails, fall back to webdriver below
                 pass
 
-            driver = _build_driver(visible=True)
-            if driver is None:
-                raise RuntimeError("Browser driver unavailable")
 
-            driver.set_page_load_timeout(PAGE_TIMEOUT_SECONDS)
-            driver.set_script_timeout(PAGE_TIMEOUT_SECONDS)
-
-            driver.get(search_url)
-            _wait_for_page(driver)
-            meta["page_title"] = driver.title
-            meta["html_length"] = len(driver.page_source)
-
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            if _looks_like_blocked_page(soup):
-                raise RuntimeError("FirstCry returned a blocked page")
-
-            metadata = extract_firstcry_product_metadata(driver.page_source)
-            meta.update({k: v for k, v in metadata.items() if v is not None})
-
-            selected_link, selected_name = _select_best_product_link(soup, search_query)
-            product_link = selected_link or metadata.get("product_url")
-            if not product_link:
-                product_link = None
-
-            if selected_name:
-                current_name = meta.get("product_name")
-                current_name_text = str(current_name or "")
-                if not current_name_text or current_name_text.lower() == search_query.lower() or current_name_text.lower() in selected_name.lower():
-                    meta["product_name"] = selected_name
-                else:
-                    selected_score = _score_title_match(selected_name, search_query)
-                    current_score = _score_title_match(current_name_text, search_query)
-                    if selected_score > current_score or (selected_score == current_score and len(selected_name) > len(current_name_text)):
-                        meta["product_name"] = selected_name
-
-            if product_link:
-                meta["product_url"] = product_link
-                driver.get(product_link)
-                _wait_for_page(driver, "body")
-                meta["page_title"] = driver.title
-                meta["html_length"] = len(driver.page_source)
-                page_details = extract_firstcry_product_details(driver.page_source, query=search_query)
-                meta.update({k: v for k, v in page_details.items() if v is not None})
-                if selected_name and _looks_like_valid_product_title(selected_name):
-                    meta["product_name"] = selected_name
-                else:
-                    meta["product_name"] = page_details.get("product_name") or meta.get("product_name")
-                meta["product_price"] = page_details.get("product_price") or meta.get("product_price")
-                meta["product_image"] = page_details.get("product_image") or meta.get("product_image")
-
-            review_pages = [BeautifulSoup(driver.page_source, "html.parser")]
-            if product_link:
-                if _click_review_tab(driver):
-                    meta["page_title"] = driver.title
-                    meta["html_length"] = len(driver.page_source)
-                _load_visible_reviews(driver)
-                review_pages = _iter_review_pages(driver, review_pages[0], max_pages=MAX_PAGES)
-
-            json_reviews = _extract_reviews_from_json_ld(driver.page_source, max_reviews=max_reviews)
-            if not json_reviews:
-                json_reviews = _extract_reviews_from_embedded_json(driver.page_source, max_reviews=max_reviews)
-            if json_reviews:
-                meta["json_review_count"] = len(json_reviews)
-                for review_item in json_reviews:
-                    parsed = _extract_review_data_from_json(review_item)
-                    if parsed["review_text"]:
-                        reviews.append(parsed)
-                        if len(reviews) >= max_reviews:
-                            break
-
-            if len(reviews) < max_reviews:
-                for page_soup in review_pages:
-                    review_cards = page_soup.select(
-                        ".review-card, .review-item, .review-block, .review-card__content, .review-section, [class*='review']"
-                    )
-                    meta["review_blocks_detected"] = max(meta.get("review_blocks_detected", 0), len(review_cards))
-                    for card in review_cards:
-                        review_text = _extract_firstcry_review_text(card)
-                        rating = _extract_firstcry_review_rating(card)
-                        reviewer_name = _extract_reviewer_name(card)
-                        review_date = _extract_review_date(card)
-                        if review_text:
-                            reviews.append(
-                                {
-                                    "review_text": review_text,
-                                    "rating": rating or 0,
-                                    "review_rating": rating or 0,
-                                    "reviewer_name": reviewer_name,
-                                    "review_date": review_date,
-                                    "platform": "firstcry",
-                                }
-                            )
-                            if len(reviews) >= max_reviews:
-                                break
-                    if len(reviews) >= max_reviews:
-                        break
-
-            if not reviews:
-                logger.warning(
-                    "FirstCry review extraction failed: no reviews found after HTML parsing and JSON/LD extraction"
-                )
-
-            meta["extracted_reviews_count"] = len(reviews)
-            if reviews or metadata.get("product_name"):
-                meta.update({"blocked": False, "message": "Scraping completed successfully.", "success": True})
-                return {"reviews": reviews[:max_reviews], "meta": meta} if return_metadata else reviews[:max_reviews]
-
-            raise RuntimeError("No usable review or product data found")
-        except (TimeoutException, WebDriverException, Exception) as exc:
-            logger.warning("FirstCry scraping attempt %s failed: %s", attempt + 1, exc)
-            if attempt == MAX_RETRIES - 1:
-                meta.update({"blocked": True, "message": "No real reviews found or scraping blocked", "success": False})
-                break
-            time.sleep(1)
-        finally:
-            if driver:
-                driver.quit()
-                driver = None
-
-    return {"reviews": reviews[:max_reviews], "meta": meta} if return_metadata else reviews[:max_reviews]
+def PRODUCT_LINK_TOKENS_AS_CSS() -> list[str]:
+    return [f"a[href*='{token}' i]" for token in PRODUCT_LINK_TOKENS]
 
 
 if __name__ == "__main__":
-    result = scrape_firstcry_reviews("iphone 15", max_reviews=5, return_metadata=True)
-    print(result)
+    result = scrape_firstcry_reviews("baby shampoo", max_reviews=5, return_metadata=True, headless=True)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
