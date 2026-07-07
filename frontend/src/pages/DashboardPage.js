@@ -112,6 +112,26 @@ const DashboardPage = () => {
     loadData();
   }, []);
 
+  // Refresh dashboard when a new analysis completes elsewhere in the app
+  useEffect(() => {
+    const handler = async () => {
+      try {
+        setLoading(true);
+        const [productList, dashboardData] = await Promise.all([fetchProducts(), fetchDashboard()]);
+        setProducts(productList);
+        setDashboard(dashboardData);
+        setError('');
+      } catch (err) {
+        // keep previous state but surface an error
+        setError('Unable to refresh dashboard after analysis.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    window.addEventListener('productAnalyzed', handler);
+    return () => window.removeEventListener('productAnalyzed', handler);
+  }, []);
+
   const filtered = products;
   const totalReviews = dashboard?.total_reviews || filtered.reduce((sum, product) => sum + Number(product.totalReviews || product.reviews || 0), 0);
   const avgRating = dashboard?.average_rating ? dashboard.average_rating.toFixed(1) : (filtered.length ? (filtered.reduce((sum, product) => sum + Number(product.rating || 0), 0) / filtered.length).toFixed(1) : '0.0');

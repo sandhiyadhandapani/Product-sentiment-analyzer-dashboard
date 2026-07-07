@@ -4,21 +4,36 @@ from pydantic import BaseModel, Field
 
 
 class Review(BaseModel):
-    id: str
-    username: str
-    rating: float
-    comment: str
+    # Make review model permissive to accommodate DB and scraper shapes
+    id: str | None = None
+    username: str | None = None
+    reviewer_name: str | None = None
+    rating: float | None = None
+    review_rating: int | None = None
+    review_text: str | None = None
+    comment: str | None = None
 
 
 class Product(BaseModel):
-    id: str
-    name: str
-    category: str
-    price: str
-    image: str
-    description: str
-    rating: float
-    reviews: list[Review]
+    # Accept both legacy frontend fields and DB fields
+    id: str | None = None
+    name: str | None = None
+    product_name: str | None = None
+    category: str | None = None
+    price: str | None = None
+    product_price: str | None = None
+    image: str | None = None
+    image_url: str | None = None
+    product_image: str | None = None
+    description: str | None = None
+    rating: float | None = None
+    product_rating: float | None = None
+    total_ratings: int | None = None
+    total_reviews: int | None = None
+    reviews: list[Review] | None = None
+
+    class Config:
+        extra = "allow"
 
 
 class ReviewRequest(BaseModel):

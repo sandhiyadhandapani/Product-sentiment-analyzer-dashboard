@@ -34,6 +34,12 @@ export const saveAnalyzedProduct = (product) => {
   if (!product) return;
   try {
     localStorage.setItem(ANALYSIS_STORAGE_KEY, JSON.stringify(product));
+    try {
+      // notify other parts of the app (e.g., Dashboard) that a product was analyzed
+      window.dispatchEvent(new Event('productAnalyzed'));
+    } catch (e) {
+      // ignore in non-browser environments
+    }
   } catch (error) {
     console.warn('Unable to persist analyzed product', error);
   }
