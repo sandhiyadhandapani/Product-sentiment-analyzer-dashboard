@@ -28,8 +28,13 @@ const ProductDetailsPage = () => {
 
   useEffect(() => {
     const loadProduct = async () => {
+      console.log('[ProductDetailsPage] Loading product...');
+      console.log('[ProductDetailsPage] Location state:', location.state);
+      console.log('[ProductDetailsPage] Params:', params);
+      
       const stateProduct = location.state?.product;
       if (stateProduct) {
+        console.log('[ProductDetailsPage] Using product from location state:', stateProduct);
         setProduct(stateProduct);
         setLoading(false);
         return;
@@ -37,6 +42,7 @@ const ProductDetailsPage = () => {
 
       const storedProduct = getStoredAnalyzedProduct();
       if (storedProduct) {
+        console.log('[ProductDetailsPage] Using product from storage:', storedProduct);
         setProduct(storedProduct);
         setLoading(false);
         return;
@@ -44,21 +50,26 @@ const ProductDetailsPage = () => {
 
       const query = params.id ? decodeURIComponent(params.id) : null;
       if (!query) {
+        console.error('[ProductDetailsPage] No product query found');
         setError('No product selected.');
         setProduct(null);
         setLoading(false);
         return;
       }
 
+      console.log('[ProductDetailsPage] Fetching product from API with query:', query);
       setLoading(true);
       setError('');
       try {
         const productData = await getProduct(query);
+        console.log('[ProductDetailsPage] Product data received:', productData);
         setProduct(productData);
       } catch (err) {
-        setError('Unable to load product details right now.');
+        console.error('[ProductDetailsPage] Error loading product:', err);
+        setError('Unable to load product details right now. Please try again.');
         setProduct(null);
       } finally {
+        console.log('[ProductDetailsPage] Product loading completed');
         setLoading(false);
       }
     };
@@ -70,7 +81,10 @@ const ProductDetailsPage = () => {
     <div className="min-h-screen bg-gray-50 font-sans">
       <Navbar/>
       <div className="flex items-center justify-center h-64">
-        <p className="text-gray-500">Loading product details...</p>
+        <div className="text-center">
+          <p className="text-gray-500 mb-2">Loading product details...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+        </div>
       </div>
       <Footer/>
     </div>
@@ -89,6 +103,22 @@ const ProductDetailsPage = () => {
     </div>
   );
 
+  // Safe access helpers
+  const safeName = product?.name || 'Unknown Product';
+  const safePrice = product?.price || 'N/A';
+  const safeRating = product?.rating || 0;
+  const safeReviews = product?.reviews || 0;
+  const safeTotalRatings = product?.totalRatings || 0;
+  const safeDescription = product?.description || 'No description available.';
+  const safeImage = product?.image || '';
+  const safePlatform = product?.platform || 'FirstCry';
+  const safeCategory = product?.category || 'Baby Products';
+  const safeSentiment = product?.sentiment || 'Neutral';
+  const safeSentimentBreakdown = product?.sentimentBreakdown || { positive: 0, neutral: 0, negative: 0 };
+  const safeTopKeywords = product?.topKeywords || [];
+  const safeSpecs = product?.specs || [];
+  const safeReviewItems = product?.reviewItems || [];
+
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
       <Navbar/>
@@ -98,7 +128,7 @@ const ProductDetailsPage = () => {
           <span>/</span>
           <button onClick={()=>navigate('/search')} className="hover:text-indigo-600">Search</button>
           <span>/</span>
-          <span className="text-gray-900 font-medium">{product.name}</span>
+          <span className="text-gray-900 font-medium">{safeName}</span>
         </div>
       </div>
 
@@ -120,24 +150,24 @@ const ProductDetailsPage = () => {
             <div className="flex-1">
               <div className="flex items-start justify-between mb-2">
                 <div>
-                  <h1 className="text-xl font-extrabold text-gray-900">{product.name}</h1>
-                  <span className="text-xs font-medium px-2 py-0.5 rounded mt-1 inline-block bg-pink-50 text-pink-600">{product.platform || 'FirstCry'}</span>
+                  <h1 className="text-xl font-extrabold text-gray-900">{safeName}</h1>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded mt-1 inline-block bg-pink-50 text-pink-600">{safePlatform}</span>
                 </div>
-                <span className="text-xl font-bold text-indigo-600">{product.price}</span>
+                <span className="text-xl font-bold text-indigo-600">{safePrice}</span>
               </div>
               <div className="flex items-center gap-1.5 mb-3">
                 {Array.from({length:5}).map((_,i)=>(
-                  <svg key={i} width="16" height="16" viewBox="0 0 24 24" fill={i<Math.floor(product.rating)?'#f59e0b':'#e5e7eb'}>
+                  <svg key={i} width="16" height="16" viewBox="0 0 24 24" fill={i<Math.floor(safeRating)?'#f59e0b':'#e5e7eb'}>
                     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                   </svg>
                 ))}
-                <span className="text-sm font-bold text-gray-800">{product.rating}</span>
-                <span className="text-sm text-gray-500">({product.reviews.toLocaleString()} reviews)</span>
+                <span className="text-sm font-bold text-gray-800">{safeRating}</span>
+                <span className="text-sm text-gray-500">({safeReviews.toLocaleString()} reviews)</span>
               </div>
-              <p className="text-sm text-gray-600 mb-4">{product.description}</p>
-              {product.reviews === 0 ? <p className="text-sm text-amber-600 mb-4">No reviews found</p> : null}
+              <p className="text-sm text-gray-600 mb-4">{safeDescription}</p>
+              {safeReviews === 0 ? <p className="text-sm text-amber-600 mb-4">No reviews found</p> : null}
               <div className="flex gap-3">
-                <button onClick={()=>navigate(`/reviews/${encodeURIComponent(product.name)}`)} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
+                <button onClick={()=>navigate(`/reviews/${encodeURIComponent(safeName)}`)} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
                   View All Reviews
                 </button>
                 <button className="border border-indigo-200 text-indigo-600 text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-indigo-50">
@@ -164,12 +194,12 @@ const ProductDetailsPage = () => {
               <h3 className="text-sm font-bold text-gray-800 mb-4">Sentiment Distribution</h3>
               <div className="flex flex-col items-center gap-4">
                 <DonutChart size={120} strokeWidth={18} segments={[
-                  { value: product.sentimentBreakdown.positive, color: '#22c55e' },
-                  { value: product.sentimentBreakdown.neutral, color: '#f59e0b' },
-                  { value: product.sentimentBreakdown.negative, color: '#ef4444' },
+                  { value: safeSentimentBreakdown.positive, color: '#22c55e' },
+                  { value: safeSentimentBreakdown.neutral, color: '#f59e0b' },
+                  { value: safeSentimentBreakdown.negative, color: '#ef4444' },
                 ]} />
                 <div className="w-full space-y-2">
-                  {[{label:'Positive',p:product.sentimentBreakdown.positive,c:'#22c55e'},{label:'Neutral',p:product.sentimentBreakdown.neutral,c:'#f59e0b'},{label:'Negative',p:product.sentimentBreakdown.negative,c:'#ef4444'}].map(s=>(
+                  {[{label:'Positive',p:safeSentimentBreakdown.positive,c:'#22c55e'},{label:'Neutral',p:safeSentimentBreakdown.neutral,c:'#f59e0b'},{label:'Negative',p:safeSentimentBreakdown.negative,c:'#ef4444'}].map(s=>(
                     <div key={s.label} className="flex items-center gap-2">
                       <span className="w-3 h-3 rounded-full" style={{background:s.c}}/>
                       <span className="text-xs text-gray-600 flex-1">{s.label}</span>
@@ -198,11 +228,11 @@ const ProductDetailsPage = () => {
               <h3 className="text-sm font-bold text-gray-800 mb-4">Quick Stats</h3>
               <div className="space-y-3">
                 {[
-                  {label:'Total Reviews',value:product.reviews.toLocaleString(),icon:'💬'},
-                  {label:'Average Rating',value:`${product.rating} / 5`,icon:'⭐'},
-                  {label:'Positive Rate',value:`${product.sentimentBreakdown.positive}%`,icon:'✅'},
-                  {label:'Platform',value:product.platform,icon:'🛒'},
-                  {label:'Category',value:product.category,icon:'📦'},
+                  {label:'Total Reviews',value:safeReviews.toLocaleString(),icon:'💬'},
+                  {label:'Average Rating',value:`${safeRating} / 5`,icon:'⭐'},
+                  {label:'Positive Rate',value:`${safeSentimentBreakdown.positive}%`,icon:'✅'},
+                  {label:'Platform',value:safePlatform,icon:'🛒'},
+                  {label:'Category',value:safeCategory,icon:'📦'},
                 ].map(stat=>(
                   <div key={stat.label} className="flex items-center justify-between py-2 border-b border-gray-50">
                     <div className="flex items-center gap-2">
@@ -222,9 +252,9 @@ const ProductDetailsPage = () => {
             <h3 className="text-sm font-bold text-gray-800 mb-6">Detailed Sentiment Analysis</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                {label:'Positive Reviews',count:Math.floor(product.reviews*product.sentimentBreakdown.positive/100),color:'#22c55e',bg:'#f0fdf4',icon:'😊'},
-                {label:'Neutral Reviews',count:Math.floor(product.reviews*product.sentimentBreakdown.neutral/100),color:'#f59e0b',bg:'#fffbeb',icon:'😐'},
-                {label:'Negative Reviews',count:Math.floor(product.reviews*product.sentimentBreakdown.negative/100),color:'#ef4444',bg:'#fef2f2',icon:'😞'},
+                {label:'Positive Reviews',count:Math.floor(safeReviews*safeSentimentBreakdown.positive/100),color:'#22c55e',bg:'#f0fdf4',icon:'😊'},
+                {label:'Neutral Reviews',count:Math.floor(safeReviews*safeSentimentBreakdown.neutral/100),color:'#f59e0b',bg:'#fffbeb',icon:'😐'},
+                {label:'Negative Reviews',count:Math.floor(safeReviews*safeSentimentBreakdown.negative/100),color:'#ef4444',bg:'#fef2f2',icon:'😞'},
               ].map(s=>(
                 <div key={s.label} className="rounded-xl p-5 text-center" style={{background:s.bg}}>
                   <div className="text-3xl mb-2">{s.icon}</div>
@@ -240,7 +270,7 @@ const ProductDetailsPage = () => {
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
             <h3 className="text-sm font-bold text-gray-800 mb-6">Top Keywords from Reviews</h3>
             <div className="flex flex-wrap gap-3">
-              {product.topKeywords.map((kw,i)=>{
+              {safeTopKeywords.length > 0 ? safeTopKeywords.map((kw,i)=>{
                 const sizes=['text-2xl','text-xl','text-lg','text-base','text-sm'];
                 const colors=['text-indigo-600','text-purple-600','text-blue-600','text-green-600','text-orange-500'];
                 return (
@@ -248,7 +278,7 @@ const ProductDetailsPage = () => {
                     {kw}
                   </span>
                 );
-              })}
+              }) : <span className="text-gray-500 text-sm">No keywords available</span>}
             </div>
           </div>
         )}
@@ -257,7 +287,7 @@ const ProductDetailsPage = () => {
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
             <h3 className="text-sm font-bold text-gray-800 mb-4">Product Specifications</h3>
             <div className="space-y-2">
-              {product.specs.map((spec,i)=>{
+              {safeSpecs.length > 0 ? safeSpecs.map((spec,i)=>{
                 const [key,val]=spec.split(': ');
                 return (
                   <div key={i} className="flex items-start gap-4 py-3 border-b border-gray-50">
@@ -265,7 +295,7 @@ const ProductDetailsPage = () => {
                     <span className="text-xs text-gray-800">{val}</span>
                   </div>
                 );
-              })}
+              }) : <span className="text-gray-500 text-sm">No specifications available</span>}
             </div>
           </div>
         )}

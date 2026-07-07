@@ -54,30 +54,46 @@ const ProductSearchPage = () => {
   const navigate = useNavigate();
 
   const doSearch = async (q) => {
-    if (!q || !q.trim() || loading) return;
+    if (!q || !q.trim() || loading) {
+      console.log('[ProductSearchPage] Search skipped:', { q, loading });
+      return;
+    }
 
+    console.log('[ProductSearchPage] Starting search for:', q);
     setLoading(true);
     setError('');
     setMessage('');
     try {
+      console.log('[ProductSearchPage] Calling searchProducts API...');
       const { products, message: responseMessage } = await searchProducts(q, platform);
+      console.log('[ProductSearchPage] API response:', { products, responseMessage });
+      
       setResults(products);
-      if (products.length) {
+      
+      if (products.length > 0) {
+        console.log('[ProductSearchPage] Saving product to storage:', products[0]);
         saveAnalyzedProduct(products[0]);
+        setMessage(responseMessage || 'Analysis completed successfully.');
+        setError('');
+      } else {
+        console.warn('[ProductSearchPage] No products found in response');
+        setMessage(responseMessage || 'No products found.');
+        setError('');
       }
-      setMessage(responseMessage || '');
-      setError(products.length ? '' : (responseMessage || 'Unable to load products right now.'));
     } catch (err) {
+      console.error('[ProductSearchPage] Search error:', err);
       setResults([]);
       setMessage('');
-      setError('Unable to load products right now.');
+      setError('Unable to load products right now. Please try again.');
     } finally {
+      console.log('[ProductSearchPage] Search completed, loading:', false);
       setLoading(false);
     }
   };
 
   const handleSearch = (e) => {
     e.preventDefault();
+    console.log('[ProductSearchPage] Handle search triggered with query:', query);
     doSearch(query);
   };
 

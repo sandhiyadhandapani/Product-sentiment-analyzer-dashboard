@@ -91,16 +91,31 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         "product_price": None,
         "product_rating": None,
         "total_ratings": None,
+        "current_price": None,
+        "rating": None,
     }
 
     if firstcry_reviews:
         selected_reviews = firstcry_reviews
         selected_meta = firstcry_meta if firstcry_meta else None
-        product_metadata.update({k: v for k, v in firstcry_meta.items() if k in product_metadata and v is not None})
+        # Map scraper fields to analyzer expected fields
+        product_metadata.update({
+            "product_name": firstcry_meta.get("product_name") or product_metadata.get("product_name"),
+            "product_image": firstcry_meta.get("product_image") or firstcry_meta.get("image"),
+            "product_price": firstcry_meta.get("product_price") or firstcry_meta.get("current_price"),
+            "product_rating": firstcry_meta.get("product_rating") or firstcry_meta.get("rating"),
+            "total_ratings": firstcry_meta.get("total_ratings"),
+        })
     else:
         selected_reviews = []
         selected_meta = firstcry_meta if firstcry_meta else None
-        product_metadata.update({k: v for k, v in (firstcry_meta or {}).items() if k in product_metadata and v is not None})
+        product_metadata.update({
+            "product_name": firstcry_meta.get("product_name") or product_metadata.get("product_name"),
+            "product_image": firstcry_meta.get("product_image") or firstcry_meta.get("image"),
+            "product_price": firstcry_meta.get("product_price") or firstcry_meta.get("current_price"),
+            "product_rating": firstcry_meta.get("product_rating") or firstcry_meta.get("rating"),
+            "total_ratings": firstcry_meta.get("total_ratings"),
+        })
 
     if firstcry_meta:
         _log_scraper_metadata("firstcry", "scrape_firstcry_reviews", firstcry_meta)
@@ -154,6 +169,8 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         "product_price": product_price,
         "product_rating": product_metadata.get("product_rating"),
         "total_ratings": product_metadata.get("total_ratings"),
+        "rating": product_metadata.get("product_rating"),  # Add rating field for frontend compatibility
+        "current_price": product_price,  # Add current_price field for frontend compatibility
         "platform": selected_platform,
         "total_reviews": len(analyzed_reviews),
         "positive": positive,
@@ -168,6 +185,15 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         },
         "message": message,
     }
+    
+    logger.info(f"=== API Response to Frontend ===")
+    logger.info(f"Product Name: {result['product_name']}")
+    logger.info(f"Product Price: {result['product_price']}")
+    logger.info(f"Product Rating: {result['product_rating']}")
+    logger.info(f"Total Ratings: {result['total_ratings']}")
+    logger.info(f"Total Reviews: {result['total_reviews']}")
+    logger.info(f"Platform: {result['platform']}")
+    logger.info(f"Success: {result['success']}")
 
     try:
         return save_analysis_result(result)

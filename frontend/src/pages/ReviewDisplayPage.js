@@ -77,17 +77,26 @@ const ReviewDisplayPage = () => {
 
   useEffect(() => {
     const loadReviews = async () => {
+      console.log('[ReviewDisplayPage] Loading reviews for product:', id);
       setLoading(true);
       setError('');
       try {
+        console.log('[ReviewDisplayPage] Fetching product data...');
         const productData = await getProduct(decodeURIComponent(id));
-        const reviewData = await getProductReviews(decodeURIComponent(id));
+        console.log('[ReviewDisplayPage] Product data received:', productData);
         setProductName(productData.name);
+        
+        console.log('[ReviewDisplayPage] Fetching review data...');
+        const reviewData = await getProductReviews(decodeURIComponent(id));
+        console.log('[ReviewDisplayPage] Review data received:', reviewData);
+        console.log('[ReviewDisplayPage] Number of reviews:', reviewData.length);
         setReviews(reviewData);
       } catch (err) {
+        console.error('[ReviewDisplayPage] Error loading reviews:', err);
         setError('Unable to load reviews right now.');
         setReviews([]);
       } finally {
+        console.log('[ReviewDisplayPage] Loading completed');
         setLoading(false);
       }
     };
