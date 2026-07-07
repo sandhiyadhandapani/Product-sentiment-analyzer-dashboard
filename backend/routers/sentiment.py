@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from data.analysis_store import get_analysis_history
 from schemas.product_schema import AnalyzeRequest, AnalysisResponse, ReviewRequest, SentimentResponse
-from sentiment.analyzer import analyze_product, analyze_sentiment
+from sentiment.analyzer import analyze_product, analyze_product_async, analyze_sentiment
 
 router = APIRouter(tags=["sentiment"])
 
@@ -13,7 +13,7 @@ async def analyze_product_endpoint(payload: AnalyzeRequest):
         raise HTTPException(status_code=400, detail="Product name cannot be empty")
 
     try:
-        return analyze_product(payload.product, platform=payload.platform)
+        return await analyze_product_async(payload.product, platform=payload.platform)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - defensive handling

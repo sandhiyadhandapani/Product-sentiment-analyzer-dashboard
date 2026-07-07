@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from data.analysis_store import save_analysis_result
+from database import save_product_with_reviews
 from scraper.firstcry_scraper import scrape_firstcry_reviews
 from utils.cleaner import clean_text
 
@@ -64,6 +66,10 @@ def _log_scraper_metadata(platform: str, scraper_name: str, metadata: dict | Non
 
 
 def analyze_product(product_name: str, platform: str | None = None) -> dict:
+    return asyncio.run(analyze_product_async(product_name, platform))
+
+
+async def analyze_product_async(product_name: str, platform: str | None = None) -> dict:
     product_query = (product_name or "").strip()
     if not product_query:
         raise ValueError("Product name cannot be empty")
@@ -185,6 +191,32 @@ def analyze_product(product_name: str, platform: str | None = None) -> dict:
         },
         "message": message,
     }
+
+    try:
+        await save_product_with_reviews(
+            {
+                "product_name": result.get("product_name") or product_query,
+                "product_url": None,
+                "image_url": result.get("product_image"),
+                "price": result.get("product_price"),
+                "rating": result.get("product_rating"),
+                "total_reviews": result.get("total_reviews"),
+                "platform": result.get("platform") or selected_platform,
+            },
+            [
+                {
+                    "review_text": review.get("review_text"),
+                    "reviewer_name": "Customer",
+                    "review_date": None,
+                    "rating": review.get("rating"),
+                    "sentiment": review.get("sentiment"),
+                    "created_at": None,
+                }
+                for review in analyzed_reviews
+            ],
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist analysis into MongoDB: %s", exc)
     
     logger.info(f"=== API Response to Frontend ===")
     logger.info(f"Product Name: {result['product_name']}")

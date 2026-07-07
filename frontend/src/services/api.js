@@ -162,6 +162,16 @@ export const getProducts = async () => {
   return data.map(normalizeProduct);
 };
 
+export const fetchProducts = async () => {
+  const { data } = await api.get('products');
+  return Array.isArray(data) ? data.map(normalizeProduct) : [];
+};
+
+export const fetchDashboard = async () => {
+  const { data } = await api.get('dashboard');
+  return data;
+};
+
 export const getProduct = async (query) => {
   console.log('[API] getProduct called with:', query);
   const data = await analyzeProduct(query, 'firstcry');

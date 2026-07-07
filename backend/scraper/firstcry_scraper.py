@@ -216,6 +216,41 @@ def _iter_json_objects(node):
             yield from _iter_json_objects(item)
 
 
+def _find_product_candidate(node) -> dict | None:
+    if not isinstance(node, dict):
+        return None
+    product_keys = (
+        "name",
+        "productName",
+        "title",
+        "price",
+        "current_price",
+        "salePrice",
+        "sellingPrice",
+        "originalPrice",
+        "mrp",
+        "rating",
+        "ratingValue",
+        "averageRating",
+        "productRating",
+        "ratings",
+        "reviewCount",
+        "reviews",
+        "totalReviews",
+        "discountPercentage",
+        "image",
+    )
+    if any(key in node for key in product_keys):
+        return node
+    for key in ("product", "productDetails", "pageProps", "props", "data"):
+        child = node.get(key)
+        if isinstance(child, dict):
+            found = _find_product_candidate(child)
+            if found is not None:
+                return found
+    return None
+
+
 def _extract_product_jsonld(html: str) -> dict:
     """Look for schema.org Product markup: name, image, offers.price, aggregateRating."""
     logger.info("Attempting to extract JSON-LD product data...")
@@ -291,11 +326,14 @@ def _extract_embedded_json_payload(html: str) -> dict:
         for obj in _iter_json_objects(payload):
             if not isinstance(obj, dict):
                 continue
+            product_candidate = _find_product_candidate(obj)
+            if product_candidate is None:
+                continue
             obj_type = obj.get("@type")
             type_matches = obj_type == "Product" or (isinstance(obj_type, list) and "Product" in obj_type)
             if not type_matches:
                 if not any(
-                    key in obj
+                    key in product_candidate
                     for key in (
                         "name",
                         "productName",
@@ -320,15 +358,15 @@ def _extract_embedded_json_payload(html: str) -> dict:
                 ):
                     continue
             result = {
-                "product_name": _clean_text(obj.get("name") or obj.get("productName") or obj.get("title")),
-                "product_image": obj.get("image") if isinstance(obj.get("image"), str) else (obj.get("image") or [None])[0],
-                "description": _clean_text(obj.get("description")),
-                "current_price": _normalize_price(obj.get("price") or obj.get("current_price") or obj.get("salePrice") or obj.get("sellingPrice")),
-                "original_price": _normalize_price(obj.get("originalPrice") or obj.get("original_price") or obj.get("mrp") or obj.get("strikethroughPrice")),
-                "discount_percentage": int(obj.get("discountPercentage")) if isinstance(obj.get("discountPercentage"), int) else None,
-                "rating": _normalize_rating(obj.get("rating") or obj.get("ratingValue") or obj.get("averageRating") or obj.get("productRating")),
-                "total_ratings": int(re.sub(r"[^\d]", "", str(obj.get("ratings") or obj.get("ratingCount") or obj.get("totalRatings") or ""))) if re.search(r"\d", str(obj.get("ratings") or obj.get("ratingCount") or obj.get("totalRatings") or "")) else None,
-                "total_reviews": int(re.sub(r"[^\d]", "", str(obj.get("reviews") or obj.get("reviewCount") or obj.get("totalReviews") or ""))) if re.search(r"\d", str(obj.get("reviews") or obj.get("reviewCount") or obj.get("totalReviews") or "")) else None,
+                "product_name": _clean_text(product_candidate.get("name") or product_candidate.get("productName") or product_candidate.get("title")),
+                "product_image": product_candidate.get("image") if isinstance(product_candidate.get("image"), str) else (product_candidate.get("image") or [None])[0],
+                "description": _clean_text(product_candidate.get("description")),
+                "current_price": _normalize_price(product_candidate.get("price") or product_candidate.get("current_price") or product_candidate.get("salePrice") or product_candidate.get("sellingPrice")),
+                "original_price": _normalize_price(product_candidate.get("originalPrice") or product_candidate.get("original_price") or product_candidate.get("mrp") or product_candidate.get("strikethroughPrice")),
+                "discount_percentage": int(product_candidate.get("discountPercentage")) if isinstance(product_candidate.get("discountPercentage"), int) else None,
+                "rating": _normalize_rating(product_candidate.get("rating") or product_candidate.get("ratingValue") or product_candidate.get("averageRating") or product_candidate.get("productRating")),
+                "total_ratings": int(re.sub(r"[^\d]", "", str(product_candidate.get("ratings") or product_candidate.get("ratingCount") or product_candidate.get("totalRatings") or ""))) if re.search(r"\d", str(product_candidate.get("ratings") or product_candidate.get("ratingCount") or product_candidate.get("totalRatings") or "")) else None,
+                "total_reviews": int(re.sub(r"[^\d]", "", str(product_candidate.get("reviews") or product_candidate.get("reviewCount") or product_candidate.get("totalReviews") or ""))) if re.search(r"\d", str(product_candidate.get("reviews") or product_candidate.get("reviewCount") or product_candidate.get("totalReviews") or "")) else None,
             }
             if result.get("product_name") or result.get("current_price") or result.get("rating"):
                 logger.debug(f"Embedded JSON extracted: name={result['product_name']}, price={result['current_price']}, rating={result['rating']}")
@@ -467,6 +505,36 @@ def _find_review_count_in_text(soup: BeautifulSoup) -> int | None:
         digits = re.sub(r"[^\d]", "", match.group(1))
         return int(digits) if digits else None
     return None
+
+
+def _find_rating_review_counts(soup: BeautifulSoup) -> tuple[int | None, int | None]:
+    rating_count = None
+    review_count = None
+    for el in soup.select("[class*='rating-count' i], [class*='review-count' i], [class*='rating' i], [class*='review' i]"):
+        text = _clean_text(el.get_text(" ", strip=True))
+        if not text:
+            continue
+        if re.search(r"\b(?:ratings?|reviews?)\b", text, re.I):
+            digits = re.sub(r"[^\d]", "", text)
+            if not digits:
+                continue
+            if "review" in text.lower() and review_count is None:
+                review_count = int(digits)
+            elif "rating" in text.lower() and rating_count is None:
+                rating_count = int(digits)
+    if rating_count is None or review_count is None:
+        text = soup.get_text(" ", strip=True)
+        matches = re.findall(r"([\d,]+)\s*(ratings?|reviews?)", text, re.I)
+        if matches:
+            for value, label in matches:
+                digits = re.sub(r"[^\d]", "", value)
+                if not digits:
+                    continue
+                if label.lower().startswith("review") and review_count is None:
+                    review_count = int(digits)
+                elif label.lower().startswith("rating") and rating_count is None:
+                    rating_count = int(digits)
+    return rating_count, review_count
 
 
 def _looks_like_review_text(text: str) -> bool:
@@ -644,14 +712,19 @@ def extract_reviews_from_html(html: str, max_reviews: int = 10) -> list[dict]:
                     return reviews
 
     review_blocks = soup.select(
-        "[class*='review' i], [id*='review' i], [class*='rating-review' i], [class*='customer-review' i], article, li"
+        "[class*='review-card' i], [class*='customer-review' i], [class*='rating-review' i], [class*='review' i], [id*='review' i], article, li"
     )
     for card in review_blocks:
+        classes = " ".join(card.get("class", []) or []).lower()
+        if any(token in classes for token in ("review-text", "review-rating", "reviewer-name", "review-date", "author-name", "user-name", "name")):
+            continue
         text = _extract_review_text(card)
         if not _looks_like_review_text(text):
             continue
+        if text.lower() in {"ratings & reviews", "write a review", "be the first to review"}:
+            continue
         rating = 0
-        rating_el = card.select_one("[class*='star' i], [class*='rating' i], [data-rating]")
+        rating_el = card.select_one("[class*='review-rating' i], [class*='rating' i], [data-rating]")
         if rating_el:
             rating = int(_normalize_rating(rating_el.get_text(" ", strip=True)))
         reviewer_el = card.select_one("[class*='reviewer' i], [class*='author' i], [class*='user' i], [class*='name' i]")
@@ -731,8 +804,17 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
         merged.get("product_name")
         or jsonld.get("product_name")
         or _clean_text((soup.select_one("meta[property='og:title']") or {}).get("content", "") if soup.select_one("meta[property='og:title']") else "")
-        or _clean_text(soup.find("h1").get_text(" ", strip=True)) if soup.find("h1") else ""
+        or _clean_text((soup.select_one("meta[property='og:title']") or {}).get("content", "") if soup.select_one("meta[property='og:title']") else "")
     )
+    if not product_name:
+        for selector in ["h1", "h2", "[class*='title' i]", "[class*='product-name' i]", "[class*='productTitle' i]"]:
+            candidate = soup.select_one(selector)
+            if not candidate:
+                continue
+            text = _clean_text(candidate.get_text(" ", strip=True))
+            if _looks_like_valid_title(text):
+                product_name = text
+                break
     
     # If still invalid, try FirstCry-specific selectors only
     if not _looks_like_valid_title(product_name):
@@ -774,22 +856,27 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
             ".product-image img",
             ".pdp-product-img img",
             "[id*='product' i][id*='image' i]",
+            "img[id*='product' i]",
+            "img[src]",
         ]
         for selector in firstcry_image_selectors:
-            image_el = soup.select_one(selector)
-            if not image_el:
+            image_els = soup.select(selector)
+            if not image_els:
                 continue
-            src = image_el.get("content") or image_el.get("src") or image_el.get("data-src")
-            if not src:
-                continue
-            alt = _clean_text(image_el.get("alt") or "")
-            if any(token in alt.lower() for token in ("logo", "icon", "sprite", "banner", "ad")):
-                continue
-            if any(token in str(src).lower() for token in ("logo", "icon", "sprite", "banner", "ad")):
-                continue
-            product_image = src
-            logger.debug(f"Product image found via selector '{selector}': {src}")
-            break
+            for image_el in image_els:
+                src = image_el.get("content") or image_el.get("src") or image_el.get("data-src")
+                if not src:
+                    continue
+                alt = _clean_text(image_el.get("alt") or "")
+                if any(token in alt.lower() for token in ("logo", "icon", "sprite", "banner", "ad")):
+                    continue
+                if any(token in str(src).lower() for token in ("logo", "icon", "sprite", "banner", "ad")):
+                    continue
+                product_image = src
+                logger.debug(f"Product image found via selector '{selector}': {src}")
+                break
+            if product_image:
+                break
     logger.info(f"Product image: {product_image}")
 
     current_price = merged.get("current_price") or microdata.get("current_price")
@@ -866,16 +953,23 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
             ".rating-score",
             ".avg-rating",
             "[class*='product-rating' i]",
+            "[class*='rating' i]",
         ]
         for selector in firstcry_rating_selectors:
-            rating_el = soup.select_one(selector)
-            if not rating_el:
-                continue
-            value = rating_el.get("content") or rating_el.get("data-rating") or rating_el.get_text(" ", strip=True)
-            normalized = _normalize_rating(value)
-            if normalized:
-                rating = normalized
-                logger.debug(f"Rating found via FirstCry selector '{selector}': {normalized}")
+            for rating_el in soup.select(selector):
+                if not rating_el:
+                    continue
+                raw_text = rating_el.get("content") or rating_el.get("data-rating") or rating_el.get_text(" ", strip=True)
+                if not raw_text:
+                    continue
+                if any(token in str(rating_el.get("class") or "").lower() for token in ("count", "review")):
+                    continue
+                normalized = _normalize_rating(raw_text)
+                if normalized:
+                    rating = normalized
+                    logger.debug(f"Rating found via FirstCry selector '{selector}': {normalized}")
+                    break
+            if rating is not None:
                 break
     
     if rating is None:
@@ -884,7 +978,8 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
         logger.info(f"Rating extracted: {rating}")
     
     # FirstCry-specific total ratings extraction
-    total_ratings = merged.get("total_ratings") or microdata.get("total_ratings") or _find_review_count_in_text(soup)
+    rating_counts, review_counts = _find_rating_review_counts(soup)
+    total_ratings = merged.get("total_ratings") or microdata.get("total_ratings") or rating_counts
     if total_ratings is None:
         # Try FirstCry-specific rating count selectors
         logger.debug("Total ratings not found, trying FirstCry-specific selectors...")
@@ -911,7 +1006,7 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
     else:
         logger.info(f"Total ratings extracted: {total_ratings}")
     
-    total_reviews = merged.get("total_reviews")
+    total_reviews = merged.get("total_reviews") or review_counts
     if total_reviews is None:
         logger.info("Total reviews extraction failed (all methods)")
     else:
@@ -919,9 +1014,23 @@ def extract_product_details(html: str, query: str | None = None) -> dict:
 
     description = merged.get("description")
     if not description:
-        meta_desc = soup.select_one("meta[name='description']")
-        description = _clean_text(meta_desc["content"]) if meta_desc and meta_desc.get("content") else ""
-        logger.debug(f"Description from meta: {description[:100]}...")
+        firstcry_description_selectors = [
+            "meta[name='description']",
+            "meta[property='og:description']",
+            "[class*='description' i]",
+            "[class*='product-description' i]",
+            "[id*='description' i]",
+            "[id*='product-description' i]",
+        ]
+        for selector in firstcry_description_selectors:
+            desc_el = soup.select_one(selector)
+            if not desc_el:
+                continue
+            value = desc_el.get("content") or desc_el.get_text(" ", strip=True)
+            description = _clean_text(value)
+            if description:
+                break
+        logger.debug(f"Description from meta/selector: {description[:100] if description else ''}...")
 
     canonical = soup.select_one("link[rel='canonical']")
     product_url = canonical["href"] if canonical and canonical.get("href") else None
@@ -1051,54 +1160,58 @@ def scrape_firstcry_reviews(product_name: str, max_reviews: int = 10, return_met
             meta["retry_count"] = attempt
             logger.info(f"=== Scraping attempt {attempt + 1}/{MAX_RETRIES} for query: {query} ===")
             
-            # 1) get product link — try plain requests first (search page is
-            #    largely server-rendered on firstcry, so this is fast and cheap)
+# 1) get product link — use Selenium first for robust search-page
+            #    parsing, then fall back to plain requests if Selenium is unavailable.
             product_link, matched_title = None, None
-            try:
-                logger.info(f"Fetching search page via requests: {search_url}")
-                resp = requests.get(search_url, headers=HEADERS, timeout=8)
-                search_soup = BeautifulSoup(resp.text, "html.parser")
-                meta["html_length"] = len(resp.text)
-                if _looks_like_blocked_page(resp.text):
-                    meta["blocked"] = True
-                    logger.warning("Search page appears blocked (captcha/robot check)")
-                product_link, matched_title = _select_best_product_link(search_soup, query)
-                if product_link and matched_title:
-                    title_score = _score_title_match(matched_title, query)
-                    logger.debug(f"Found product link: {product_link}, title: {matched_title}, score: {title_score}")
-                    if title_score <= 0 and query:
-                        logger.debug("Title score too low, discarding link")
-                        product_link, matched_title = None, None
-            except Exception as exc:
-                logger.info(f"requests-based search fetch failed: {exc}")
-
-            # 2) if requests didn't find a link (JS-rendered / blocked), fall back
-            #    to selenium for the search page too
-            if not product_link:
-                logger.info("No product link found via requests, trying Selenium...")
+            if driver is None:
+                logger.info("Building Selenium driver for search page")
                 driver = _build_driver(headless=headless)
-                if driver is None:
-                    meta["message"] = "Could not start Chrome driver."
-                    logger.error("Failed to build Chrome driver")
-                    return {"reviews": [], "meta": meta} if return_metadata else []
+            if driver is not None:
                 logger.info(f"Loading search page via Selenium: {search_url}")
-                driver.get(search_url)
-                _wait_body(driver)
-                _wait_for_any_selector(driver, PRODUCT_LINK_TOKENS_AS_CSS(), timeout=6)
-                html = driver.page_source
-                meta["html_length"] = len(html)
-                if _looks_like_blocked_page(html):
-                    meta["blocked"] = True
-                    meta["message"] = "FirstCry search page looked blocked (captcha/robot check)."
-                    logger.warning("Search page appears blocked via Selenium")
-                    if attempt < MAX_RETRIES - 1:
-                        logger.info(f"Retrying after {2 ** attempt} seconds...")
-                        time.sleep(2 ** attempt)
-                        continue
-                    return {"reviews": [], "meta": meta} if return_metadata else []
-                search_soup = BeautifulSoup(html, "html.parser")
-                product_link, matched_title = _select_best_product_link(search_soup, query)
-                logger.debug(f"Selenium found product link: {product_link}, title: {matched_title}")
+                try:
+                    driver.get(search_url)
+                    _wait_body(driver)
+                    _wait_for_any_selector(driver, PRODUCT_LINK_TOKENS_AS_CSS(), timeout=6)
+                    html = driver.page_source
+                    meta["html_length"] = len(html)
+                    if _looks_like_blocked_page(html):
+                        meta["blocked"] = True
+                        meta["message"] = "FirstCry search page looked blocked (captcha/robot check)."
+                        logger.warning("Search page appears blocked via Selenium")
+                        if attempt < MAX_RETRIES - 1:
+                            logger.info(f"Retrying after {2 ** attempt} seconds...")
+                            time.sleep(2 ** attempt)
+                            continue
+                        return {"reviews": [], "meta": meta} if return_metadata else []
+                    search_soup = BeautifulSoup(html, "html.parser")
+                    product_link, matched_title = _select_best_product_link(search_soup, query)
+                    logger.debug(f"Selenium found product link: {product_link}, title: {matched_title}")
+                except Exception as exc:
+                    logger.info(f"Selenium search-page fetch failed: {exc}")
+
+            if not product_link:
+                try:
+                    logger.info(f"Fetching search page via requests: {search_url}")
+                    resp = requests.get(search_url, headers=HEADERS, timeout=8)
+                    search_soup = BeautifulSoup(resp.text, "html.parser")
+                    meta["html_length"] = len(resp.text)
+                    if _looks_like_blocked_page(resp.text):
+                        meta["blocked"] = True
+                        logger.warning("Search page appears blocked (captcha/robot check)")
+                    product_link, matched_title = _select_best_product_link(search_soup, query)
+                    if product_link and matched_title:
+                        title_score = _score_title_match(matched_title, query)
+                        logger.debug(f"Found product link: {product_link}, title: {matched_title}, score: {title_score}")
+                        if title_score <= 0 and query:
+                            logger.debug("Title score too low, discarding link")
+                            product_link, matched_title = None, None
+                except Exception as exc:
+                    logger.info(f"requests-based search fetch failed: {exc}")
+
+            if not product_link and driver is None:
+                meta["message"] = "Could not start Chrome driver."
+                logger.error("Failed to build Chrome driver")
+                return {"reviews": [], "meta": meta} if return_metadata else []
 
             if not product_link:
                 meta["message"] = "Could not find a matching product link on the search results page."

@@ -104,20 +104,21 @@ const ProductDetailsPage = () => {
   );
 
   // Safe access helpers
-  const safeName = product?.name || 'Unknown Product';
-  const safePrice = product?.price || 'N/A';
-  const safeRating = product?.rating || 0;
-  const safeReviews = product?.reviews || 0;
-  const safeTotalRatings = product?.totalRatings || 0;
-  const safeDescription = product?.description || 'No description available.';
-  const safeImage = product?.image || '';
-  const safePlatform = product?.platform || 'FirstCry';
-  const safeCategory = product?.category || 'Baby Products';
-  const safeSentiment = product?.sentiment || 'Neutral';
-  const safeSentimentBreakdown = product?.sentimentBreakdown || { positive: 0, neutral: 0, negative: 0 };
-  const safeTopKeywords = product?.topKeywords || [];
-  const safeSpecs = product?.specs || [];
-  const safeReviewItems = product?.reviewItems || [];
+  const rawProduct = product?.raw || product || {};
+  const safeName = rawProduct.product_name || rawProduct.name || rawProduct.product || product?.name || 'Unknown Product';
+  const safePrice = rawProduct.product_price || rawProduct.price || rawProduct.current_price || product?.price || 'N/A';
+  const safeRating = Number(rawProduct.product_rating ?? rawProduct.rating ?? product?.rating ?? 0);
+  const safeReviews = Number(rawProduct.total_reviews ?? rawProduct.totalReviews ?? rawProduct.reviews ?? product?.reviews ?? 0);
+  const safeTotalRatings = Number(rawProduct.total_ratings ?? rawProduct.totalRatings ?? product?.totalRatings ?? 0);
+  const safeDescription = rawProduct.description || rawProduct.message || product?.description || 'No description available.';
+  const safeImage = rawProduct.product_image || rawProduct.image || product?.image || '';
+  const safePlatform = rawProduct.platform || product?.platform || 'FirstCry';
+  const safeCategory = rawProduct.category || product?.category || 'Baby Products';
+  const safeSentiment = rawProduct.sentiment || product?.sentiment || 'Neutral';
+  const safeSentimentBreakdown = rawProduct.sentimentBreakdown || product?.sentimentBreakdown || { positive: 0, neutral: 0, negative: 0 };
+  const safeTopKeywords = rawProduct.topKeywords || product?.topKeywords || [];
+  const safeSpecs = rawProduct.specs || product?.specs || [];
+  const safeReviewItems = rawProduct.reviewItems || product?.reviewItems || [];
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
