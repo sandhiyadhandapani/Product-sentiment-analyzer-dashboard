@@ -40,7 +40,7 @@ async def connect_to_mongo() -> AsyncIOMotorDatabase:
         return _db
 
     mongodb_uri = get_mongo_uri()
-    if not mongodb_uri or mongodb_uri.strip() == "mongodb://localhost:27017":
+    if not mongodb_uri:
         raise RuntimeError("MongoDB URI is not configured")
 
     try:
