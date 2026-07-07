@@ -7,7 +7,7 @@ backend/venv/
 __pycache__/
 
 # Environment files
-.env
+
 
 # Build folders
 build/
