@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DonutChart from '../components/DonutChart';
-import { fetchDashboard, fetchProducts } from '../services/api';
+import { fetchDashboard, fetchProducts, hasAnalyzedInSession } from '../services/api';
 
 const TrendLine = ({ data }) => (
   <svg viewBox="0 0 300 90" className="w-full h-24">
@@ -60,7 +60,7 @@ const StatCard = ({value,label,icon,color,bg}) => (
   </div>
 );
 
-const ReviewRow = ({ user, stars, text, sentiment }) => {
+const ReviewRow = ({ user, stars, date, text, sentiment }) => {
   const cfg = { Positive: { color: '#16a34a', bg: '#f0fdf4', emoji: '😊' }, Neutral: { color: '#d97706', bg: '#fffbeb', emoji: '😐' }, Negative: { color: '#dc2626', bg: '#fef2f2', emoji: '😞' } }[sentiment] || { color: '#6b7280', bg: '#f3f4f6', emoji: '💬' };
   return (
     <div className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
@@ -74,7 +74,7 @@ const ReviewRow = ({ user, stars, text, sentiment }) => {
           ))}
         </div>
         <p className="text-xs text-gray-700 truncate">{text}</p>
-        <p className="text-xs text-gray-400 mt-0.5">{user}</p>
+        <p className="text-xs text-gray-400 mt-0.5">{user}{date ? ` · ${date}` : ''}</p>
       </div>
       <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0" style={{color:cfg.color,background:cfg.bg}}>{sentiment}</span>
     </div>
@@ -86,10 +86,20 @@ const DashboardPage = () => {
   const [range, setRange] = useState('Last 30 Days');
   const [products, setProducts] = useState([]);
   const [dashboard, setDashboard] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Show data only after an analysis in THIS session. A full page refresh resets
+  // this (module flag reloads), so the dashboard returns to its empty state
+  // instead of showing the last persisted product.
+  const [analyzed, setAnalyzed] = useState(hasAnalyzedInSession());
+  const [loading, setLoading] = useState(hasAnalyzedInSession());
   const [error, setError] = useState('');
 
   useEffect(() => {
+    // Nothing analyzed this session (e.g. fresh load / after refresh) -> keep the
+    // empty state; do not pull the last persisted product from the backend.
+    if (!hasAnalyzedInSession()) {
+      setLoading(false);
+      return;
+    }
     const loadData = async () => {
       try {
         setLoading(true);
@@ -116,6 +126,7 @@ const DashboardPage = () => {
   useEffect(() => {
     const handler = async () => {
       try {
+        setAnalyzed(true);
         setLoading(true);
         const [productList, dashboardData] = await Promise.all([fetchProducts(), fetchDashboard()]);
         setProducts(productList);
@@ -132,18 +143,77 @@ const DashboardPage = () => {
     return () => window.removeEventListener('productAnalyzed', handler);
   }, []);
 
-  const filtered = products;
-  const totalReviews = dashboard?.total_reviews || filtered.reduce((sum, product) => sum + Number(product.totalReviews || product.reviews || 0), 0);
-  const avgRating = dashboard?.average_rating ? dashboard.average_rating.toFixed(1) : (filtered.length ? (filtered.reduce((sum, product) => sum + Number(product.rating || 0), 0) / filtered.length).toFixed(1) : '0.0');
   const overallPos = dashboard?.positive_percentage || 0;
   const overallNeu = dashboard?.neutral_percentage || 0;
   const overallNeg = dashboard?.negative_percentage || 0;
+  const dominantSentiment =
+    overallPos >= overallNeu && overallPos >= overallNeg
+      ? 'Positive'
+      : overallNeg >= overallNeu
+      ? 'Negative'
+      : 'Neutral';
+
+  // Dashboard shows ONLY the latest analyzed product (Issues 5 & 6). `products`
+  // is sorted by updated_at desc, so index 0 is the latest; its authoritative
+  // rating/reviews/sentiment come from the latest dashboard payload.
+  const latestProduct = products[0] || (dashboard?.product_name ? {
+    id: dashboard.product_name,
+    name: dashboard.product_name,
+    platform: dashboard.platform || 'FirstCry',
+    category: 'Product',
+  } : null);
+  const filtered = latestProduct
+    ? [{
+        ...latestProduct,
+        rating: Number(dashboard?.average_rating ?? latestProduct.rating ?? 0),
+        totalReviews: Number(dashboard?.total_reviews ?? latestProduct.totalReviews ?? 0),
+        sentiment: dominantSentiment,
+      }]
+    : [];
+
+  const totalReviews = dashboard?.total_reviews || filtered.reduce((sum, product) => sum + Number(product.totalReviews || product.reviews || 0), 0);
+  const avgRating = dashboard?.average_rating ? dashboard.average_rating.toFixed(1) : (filtered.length ? (filtered.reduce((sum, product) => sum + Number(product.rating || 0), 0) / filtered.length).toFixed(1) : '0.0');
   const recentReviews = (dashboard?.recent_reviews || []).map((review) => ({
     user: review.reviewer_name || review.username || 'Anonymous',
     stars: review.rating || 0,
+    date: review.review_date || review.date || '',
     text: review.review_text || review.comment || 'Great feedback',
     sentiment: review.sentiment || 'Neutral',
   })).slice(0, 5);
+
+  // Empty state: nothing analyzed in this session (fresh load / after refresh).
+  if (!analyzed) {
+    return (
+      <div className="min-h-screen bg-gray-50 font-sans">
+        <Navbar/>
+        <div className="hero-gradient py-8">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-white text-2xl font-extrabold">Dashboard Overview</h1>
+              <p className="text-gray-300 text-sm mt-1">AI-Powered sentiment insights across all products</p>
+            </div>
+            <button onClick={()=>navigate('/search')} className="btn-gradient text-white text-xs font-semibold px-4 py-2 rounded-lg hover:opacity-90">
+              + Analyze Product
+            </button>
+          </div>
+        </div>
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
+            <div className="text-5xl mb-4">📊</div>
+            <h2 className="text-lg font-bold text-gray-800 mb-2">No analysis yet</h2>
+            <p className="text-sm text-gray-500 mb-6">
+              Analyze a product to see its sentiment insights here. These results are for the
+              current session only and clear when you refresh the page.
+            </p>
+            <button onClick={()=>navigate('/search')} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
+              + Analyze a Product
+            </button>
+          </div>
+        </div>
+        <Footer/>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -293,26 +363,39 @@ const DashboardPage = () => {
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
           <h3 className="text-sm font-bold text-gray-800 mb-5">Source Summary</h3>
           <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
-            {['FirstCry'].map(plat=>{
-              const pp=products.filter(p=>p.platform===plat || !p.platform || p.platform==='FirstCry');
-              const avgR=(pp.reduce((s,p)=>s+p.rating,0)/pp.length || 0).toFixed(1);
-              const totalR=pp.reduce((s,p)=>s+p.reviews,0);
-              const posP=pp.length ? Math.round(pp.reduce((s,p)=>s+p.sentimentBreakdown.positive,0)/pp.length) : 0;
-              const color='#ec4899';
-              const bg='#fdf2f8';
+            {(() => {
+              // Populated from the persisted backend Source Summary of the
+              // latest analyzed product (Issue 5) - no hardcoded/placeholder values.
+              const ss = dashboard?.source_summary || {};
+              const color = '#ec4899';
+              const bg = '#fdf2f8';
+              const website = ss.website || 'FirstCry';
+              const productName = ss.product_name || dashboard?.product_name || '—';
+              const totalR = Number(ss.total_reviews ?? dashboard?.total_reviews ?? 0);
+              const avgR = Number(ss.average_rating ?? dashboard?.average_rating ?? 0).toFixed(1);
+              const posC = Number(ss.positive_reviews ?? dashboard?.positive_count ?? 0);
+              const neuC = Number(ss.neutral_reviews ?? dashboard?.neutral_count ?? 0);
+              const negC = Number(ss.negative_reviews ?? dashboard?.negative_count ?? 0);
+              // Total Reviews shows the website total, but the sentiment counts are
+              // over the analyzed sample - so Positive% must divide by the analyzed
+              // count, not the (much larger) site total.
+              const analyzedR = Number(ss.analyzed_reviews ?? dashboard?.analyzed_reviews ?? (posC + neuC + negC)) || 0;
+              const posP = analyzedR ? Math.round((posC / analyzedR) * 100) : 0;
+              const scrapeTime = ss.scraping_time_seconds != null ? `${ss.scraping_time_seconds}s` : '—';
+              const analysisTime = ss.analysis_completed_at ? new Date(ss.analysis_completed_at).toLocaleString() : '—';
               return (
-                <div key={plat} className="rounded-xl p-5 border" style={{background:bg,borderColor:color+'30'}}>
+                <div className="rounded-xl p-5 border" style={{background:bg,borderColor:color+'30'}}>
                   <div className="flex items-center gap-2 mb-4">
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{background:color+'20'}}>
-                      <span className="text-sm font-bold" style={{color}}>{plat[0]}</span>
+                      <span className="text-sm font-bold" style={{color}}>{website[0]}</span>
                     </div>
-                    <span className="text-sm font-bold text-gray-800">{plat}</span>
-                    <span className="ml-auto text-xs text-gray-400">{pp.length} products</span>
+                    <span className="text-sm font-bold text-gray-800">{website}</span>
+                    <span className="ml-auto text-xs text-gray-400 truncate max-w-[220px]">{productName}</span>
                   </div>
                   <div className="grid grid-cols-3 gap-3 text-center mb-3">
                     <div>
-                      <div className="text-xl font-extrabold" style={{color}}>{pp.length}</div>
-                      <div className="text-xs text-gray-500">Products</div>
+                      <div className="text-xl font-extrabold" style={{color}}>{totalR.toLocaleString()}</div>
+                      <div className="text-xs text-gray-500">Total Reviews</div>
                     </div>
                     <div>
                       <div className="text-xl font-extrabold" style={{color}}>{avgR}★</div>
@@ -323,18 +406,16 @@ const DashboardPage = () => {
                       <div className="text-xs text-gray-500">Positive</div>
                     </div>
                   </div>
-                  <div>
-                    <div className="flex justify-between text-xs text-gray-500 mb-1">
-                      <span>Total Reviews</span>
-                      <span className="font-bold text-gray-700">{totalR.toLocaleString()}</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-1.5">
-                      <div className="h-1.5 rounded-full" style={{width:`${posP}%`,background:color}}/>
-                    </div>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-gray-500"><span>Positive Reviews</span><span className="font-bold text-gray-700">{posC.toLocaleString()}</span></div>
+                    <div className="flex justify-between text-xs text-gray-500"><span>Neutral Reviews</span><span className="font-bold text-gray-700">{neuC.toLocaleString()}</span></div>
+                    <div className="flex justify-between text-xs text-gray-500"><span>Negative Reviews</span><span className="font-bold text-gray-700">{negC.toLocaleString()}</span></div>
+                    <div className="flex justify-between text-xs text-gray-500"><span>Scraping Time</span><span className="font-bold text-gray-700">{scrapeTime}</span></div>
+                    <div className="flex justify-between text-xs text-gray-500"><span>Analysis Time</span><span className="font-bold text-gray-700">{analysisTime}</span></div>
                   </div>
                 </div>
               );
-            })}
+            })()}
           </div>
         </div>
       </div>

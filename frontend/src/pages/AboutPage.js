@@ -2,16 +2,6 @@ import React from 'react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 
-const TeamCard = ({ name, role, emoji }) => (
-  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 text-center card-hover">
-    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center mx-auto mb-4 text-3xl">
-      {emoji}
-    </div>
-    <h3 className="text-sm font-bold text-gray-900 mb-1">{name}</h3>
-    <p className="text-xs text-indigo-600 font-medium">{role}</p>
-  </div>
-);
-
 const StatBadge = ({ value, label }) => (
   <div className="text-center">
     <div className="text-3xl font-extrabold text-indigo-600 mb-1">{value}</div>
@@ -111,20 +101,6 @@ const AboutPage = () => {
                 <div className="text-xs text-gray-500">{t.desc}</div>
               </div>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Team */}
-      <section className="py-16 bg-gray-50">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Meet the Team</h2>
-          <div className="w-10 h-1 bg-indigo-600 rounded-full mx-auto mb-10" />
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-            <TeamCard name="Member 1" role="Frontend Developer" emoji="👨‍💻" />
-            <TeamCard name="Member 2" role="Frontend Developer" emoji="👩‍💻" />
-            <TeamCard name="Member 3" role="Backend Developer" emoji="👨‍🔧" />
-            <TeamCard name="Member 4" role="ML / NLP Engineer" emoji="👩‍🔬" />
           </div>
         </div>
       </section>

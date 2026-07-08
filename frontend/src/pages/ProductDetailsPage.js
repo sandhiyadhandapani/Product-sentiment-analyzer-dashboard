@@ -48,7 +48,16 @@ const ProductDetailsPage = () => {
         return;
       }
 
-      const query = params.id ? decodeURIComponent(params.id) : null;
+      // Decode defensively so a name with a literal '%' can't crash the page.
+      let query = params.id || null;
+      if (params.id) {
+        try {
+          query = decodeURIComponent(params.id);
+        } catch (decodeError) {
+          console.warn('[ProductDetailsPage] params.id is not valid percent-encoding, using raw value:', params.id);
+          query = params.id;
+        }
+      }
       if (!query) {
         console.error('[ProductDetailsPage] No product query found');
         setError('No product selected.');
@@ -106,7 +115,24 @@ const ProductDetailsPage = () => {
   // Safe access helpers
   const rawProduct = product?.raw || product || {};
   const safeName = rawProduct.product_name || rawProduct.name || rawProduct.product || product?.name || 'Unknown Product';
-  const safePrice = rawProduct.product_price || rawProduct.price || rawProduct.current_price || product?.price || 'N/A';
+  // Issue 1: Product Details must display the Original Price (MRP) that the
+  // backend/database already provides in `original_price`, not the current
+  // selling price. Format the numeric MRP as ₹ (Indian grouping); fall back to
+  // the current price only when the product genuinely has no separate MRP.
+  // Product Details shows a single price: the Current (selling) price that the
+  // backend/database saves in `current_price` — the actual price the user pays.
+  // Keep the paise (652.86 -> ₹652.86). Fall back to the MRP only when the
+  // product genuinely has no separate selling price.
+  const currentPriceValue = rawProduct.current_price ?? product?.raw?.current_price ?? null;
+  const originalPriceValue = rawProduct.original_price ?? product?.raw?.original_price ?? null;
+  const formatRupees = (value) => {
+    const num = Number(value);
+    return value !== null && value !== undefined && value !== '' && !Number.isNaN(num) && num > 0
+      ? `₹${num.toLocaleString('en-IN')}`
+      : null;
+  };
+  const safePrice = formatRupees(currentPriceValue) || formatRupees(originalPriceValue) || rawProduct.product_price || rawProduct.price || product?.price || 'N/A';
+  console.log('[UI] Product Details price → current:', currentPriceValue, '| original:', originalPriceValue, '| displayed:', safePrice);
   const safeRating = Number(rawProduct.product_rating ?? rawProduct.rating ?? product?.rating ?? 0);
   const safeReviews = Number(rawProduct.total_reviews ?? rawProduct.totalReviews ?? rawProduct.reviews ?? product?.reviews ?? 0);
   const safeTotalRatings = Number(rawProduct.total_ratings ?? rawProduct.totalRatings ?? product?.totalRatings ?? 0);
@@ -119,6 +145,140 @@ const ProductDetailsPage = () => {
   const safeTopKeywords = rawProduct.topKeywords || product?.topKeywords || [];
   const safeSpecs = rawProduct.specs || product?.specs || [];
   const safeReviewItems = rawProduct.reviewItems || product?.reviewItems || [];
+
+  // Export a neat, single-page report (product photo + name, price, ratings and
+  // sentiment breakdown). Opens a self-contained printable page and triggers the
+  // browser's print dialog, from which the user can view it on one page or
+  // "Save as PDF" to download. No external libraries required.
+  const handleExport = () => {
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+    ));
+    const pos = Number(safeSentimentBreakdown.positive) || 0;
+    const neu = Number(safeSentimentBreakdown.neutral) || 0;
+    const neg = Number(safeSentimentBreakdown.negative) || 0;
+    const totalR = Number(safeReviews) || 0;
+    const countOf = (pct) => Math.round((totalR * pct) / 100);
+    const stars = '★★★★★☆☆☆☆☆'.slice(5 - Math.round(safeRating), 10 - Math.round(safeRating));
+    const today = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    // Shorten the long SEO-style title to a clean product name for the report:
+    // drop a leading "Buy" and cut at the first marketing separator.
+    const cleanName = (raw) => {
+      let n = String(raw || '').trim().replace(/^buy\s+/i, '');
+      n = n.split(/,|\swith\s|\s[–—-]\s|\|| online/i)[0].trim();
+      if (n.length > 70) n = n.slice(0, 67).trim() + '…';
+      return n || 'Product';
+    };
+    const reportName = cleanName(safeName);
+
+    // Inline SVG donut chart for the sentiment split (no external libraries).
+    const C = 2 * Math.PI * 70;
+    let acc = 0;
+    const donutSeg = (pct, color) => {
+      const dash = (Math.max(Number(pct) || 0, 0) / 100) * C;
+      const seg = `<circle cx="100" cy="100" r="70" fill="none" stroke="${color}" stroke-width="26" stroke-dasharray="${dash.toFixed(2)} ${(C - dash).toFixed(2)}" stroke-dashoffset="${(-acc).toFixed(2)}"/>`;
+      acc += dash;
+      return seg;
+    };
+    const donutSVG = `<svg width="180" height="180" viewBox="0 0 200 200">
+      <g transform="rotate(-90 100 100)">
+        <circle cx="100" cy="100" r="70" fill="none" stroke="#f1f1f4" stroke-width="26"/>
+        ${donutSeg(pos, '#22c55e')}${donutSeg(neu, '#f59e0b')}${donutSeg(neg, '#ef4444')}
+      </g>
+      <text x="100" y="94" text-anchor="middle" font-size="30" font-weight="800" fill="#22c55e">${pos}%</text>
+      <text x="100" y="116" text-anchor="middle" font-size="13" fill="#6b7280">Positive</text>
+    </svg>`;
+
+    const bar = (label, pct, count, color) => `
+      <div class="row">
+        <div class="row-head"><span class="dot" style="background:${color}"></span>${label}</div>
+        <div class="track"><div class="fill" style="width:${Math.min(pct, 100)}%;background:${color}"></div></div>
+        <div class="row-val"><b>${pct}%</b><span>${count} reviews</span></div>
+      </div>`;
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"/>
+      <title>${esc(safeName)} — Report</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;padding:32px;background:#fff}
+        .sheet{max-width:760px;margin:0 auto}
+        .top{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #6366f1;padding-bottom:12px;margin-bottom:20px}
+        .brand{font-size:18px;font-weight:800;color:#4f46e5}
+        .brand small{display:block;font-weight:500;color:#6b7280;font-size:11px}
+        .date{font-size:12px;color:#6b7280}
+        .hero{display:flex;gap:20px;align-items:center;margin-bottom:24px}
+        .photo{width:140px;height:140px;border-radius:14px;object-fit:contain;background:#f4f4f8;border:1px solid #eee;flex-shrink:0}
+        .ph-fallback{display:flex;align-items:center;justify-content:center;font-size:34px;color:#c7c9d9}
+        .title{font-size:20px;font-weight:800;line-height:1.3;margin-bottom:6px}
+        .tag{display:inline-block;background:#fdf2f8;color:#db2777;font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;margin-right:6px}
+        .price{font-size:22px;font-weight:800;color:#4f46e5;margin-top:8px}
+        .cards{display:flex;gap:12px;margin-bottom:24px}
+        .card{flex:1;border:1px solid #eee;border-radius:12px;padding:14px;text-align:center}
+        .card .n{font-size:20px;font-weight:800}
+        .card .l{font-size:11px;color:#6b7280;margin-top:2px}
+        .stars{color:#f59e0b;font-size:16px;letter-spacing:2px}
+        h2{font-size:14px;font-weight:700;margin-bottom:12px;color:#374151}
+        .row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+        .row-head{width:90px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+        .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+        .track{flex:1;height:10px;background:#f1f1f4;border-radius:6px;overflow:hidden}
+        .fill{height:100%}
+        .row-val{width:110px;text-align:right;font-size:12px;color:#6b7280}
+        .row-val b{color:#111;margin-right:6px}
+        .senti{display:flex;align-items:center;gap:28px;margin-bottom:18px}
+        .donut{flex-shrink:0}
+        .bars{flex:1}
+        .verdict{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:12px 16px;font-size:13px;color:#4338ca}
+        .foot{margin-top:28px;border-top:1px solid #eee;padding-top:12px;font-size:11px;color:#9ca3af;text-align:center}
+        @media print{body{padding:0}.sheet{max-width:100%}}
+      </style></head><body>
+      <div class="sheet">
+        <div class="top">
+          <div class="brand">Product Sentiment Analyzer<small>Sentiment Report</small></div>
+          <div class="date">Generated: ${esc(today)}</div>
+        </div>
+        <div class="hero">
+          ${safeImage
+            ? `<img class="photo" src="${esc(safeImage)}" alt="product"/>`
+            : `<div class="photo ph-fallback">📦</div>`}
+          <div>
+            <div class="title">${esc(reportName)}</div>
+            <span class="tag">${esc(safePlatform)}</span>
+            <span class="tag">${esc(safeCategory)}</span>
+            <div class="price">${esc(safePrice)}</div>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="card"><div class="n">${safeRating}</div><div class="stars">${stars}</div><div class="l">Average Rating</div></div>
+          <div class="card"><div class="n">${totalR.toLocaleString('en-IN')}</div><div class="l">Total Reviews</div></div>
+          <div class="card"><div class="n">${safeTotalRatings.toLocaleString('en-IN')}</div><div class="l">Total Ratings</div></div>
+          <div class="card"><div class="n" style="color:#22c55e">${pos}%</div><div class="l">Positive Rate</div></div>
+        </div>
+        <h2>Sentiment Analysis</h2>
+        <div class="senti">
+          <div class="donut">${donutSVG}</div>
+          <div class="bars">
+            ${bar('Positive', pos, countOf(pos), '#22c55e')}
+            ${bar('Neutral', neu, countOf(neu), '#f59e0b')}
+            ${bar('Negative', neg, countOf(neg), '#ef4444')}
+          </div>
+        </div>
+        <div class="verdict">Overall Sentiment: <b>${esc(safeSentiment)}</b> — ${pos}% of ${totalR.toLocaleString('en-IN')} analysed reviews are positive.</div>
+        <div class="foot">Product Sentiment Analyzer • This report reflects analysis at the time of generation.</div>
+      </div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>
+      </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) {
+      alert('Please allow pop-ups to export the report.');
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -168,10 +328,10 @@ const ProductDetailsPage = () => {
               <p className="text-sm text-gray-600 mb-4">{safeDescription}</p>
               {safeReviews === 0 ? <p className="text-sm text-amber-600 mb-4">No reviews found</p> : null}
               <div className="flex gap-3">
-                <button onClick={()=>navigate(`/reviews/${encodeURIComponent(safeName)}`)} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
+                <button onClick={()=>navigate(`/reviews/${encodeURIComponent(safeName)}`, { state: { product } })} className="btn-gradient text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90">
                   View All Reviews
                 </button>
-                <button className="border border-indigo-200 text-indigo-600 text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-indigo-50">
+                <button onClick={handleExport} className="border border-indigo-200 text-indigo-600 text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-indigo-50">
                   Export Report
                 </button>
               </div>

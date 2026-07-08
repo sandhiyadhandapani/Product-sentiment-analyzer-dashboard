@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
+
+logger = logging.getLogger(__name__)
 
 DATABASE_NAME = "product_sentiment"
 
@@ -118,7 +121,14 @@ async def save_product_with_reviews(product_payload: dict[str, Any], reviews_pay
     product_url = product_data.get("product_url") or product_data.get("url") or product_data.get("product_link")
     platform = product_data.get("platform") or "firstcry"
     price = product_data.get("price") or product_data.get("product_price") or "N/A"
-    rating = product_data.get("rating") or product_data.get("product_rating") or 0
+    # Preserve the real product rating; keep None when the site truly has no
+    # rating so a missing value is never silently replaced with 0 (rating audit).
+    _rating_source = product_data.get("rating")
+    if _rating_source is None:
+        _rating_source = product_data.get("product_rating")
+    rating = float(_rating_source) if isinstance(_rating_source, (int, float)) and _rating_source else None
+    logger.info("Storing product rating in MongoDB: %s (raw=%r)", rating, _rating_source)
+    logger.info("Storing original_price in MongoDB: %s (raw=%r)", product_data.get("original_price"), product_data.get("original_price"))
     total_reviews = product_data.get("total_reviews") or product_data.get("total_ratings") or len(reviews_payload)
 
     product_doc = {
@@ -126,9 +136,13 @@ async def save_product_with_reviews(product_payload: dict[str, Any], reviews_pay
         "product_url": product_url,
         "image_url": product_data.get("image_url") or product_data.get("product_image"),
         "price": price,
-        "rating": float(rating) if isinstance(rating, (int, float)) else 0.0,
+        "current_price": product_data.get("current_price") or price,
+        "original_price": product_data.get("original_price"),
+        "discount_percentage": product_data.get("discount_percentage"),
+        "rating": rating,
         "total_reviews": int(total_reviews) if isinstance(total_reviews, (int, float)) else len(reviews_payload),
         "platform": platform,
+        "scraping_time_seconds": product_data.get("scraping_time_seconds"),
         "created_at": product_data.get("created_at") or _utc_now(),
         "updated_at": _utc_now(),
     }
@@ -155,6 +169,7 @@ async def save_product_with_reviews(product_payload: dict[str, Any], reviews_pay
             "review_text": review_text,
             "reviewer_name": review.get("reviewer_name") or review.get("username") or "Customer",
             "review_date": review.get("review_date") or review.get("date") or _utc_now(),
+            "verified_purchase": bool(review.get("verified_purchase")),
             "rating": int(review.get("rating") or review.get("review_rating") or 0),
             "sentiment": review.get("sentiment") or "Neutral",
             "created_at": review.get("created_at") or _utc_now(),
@@ -167,6 +182,27 @@ async def save_product_with_reviews(product_payload: dict[str, Any], reviews_pay
         await review_collection.update_one(duplicate_filter, {"$setOnInsert": review_doc}, upsert=True)
 
     return _to_serializable({**product_doc, "id": product_id})
+
+
+async def save_dashboard_snapshot(snapshot: dict[str, Any]) -> None:
+    """Persist the single latest-analysis dashboard snapshot, overwriting the
+    previous one (Issue 7). Stored under a fixed _id so there is always exactly
+    one dashboard snapshot in MongoDB, replaced on every new analysis."""
+    database = await get_database()
+    if database is None:
+        return
+    doc = dict(snapshot or {})
+    doc["_id"] = "latest"
+    doc["updated_at"] = _utc_now()
+    await database["dashboard_snapshots"].replace_one({"_id": "latest"}, doc, upsert=True)
+
+
+async def get_dashboard_snapshot() -> dict[str, Any] | None:
+    database = await get_database()
+    if database is None:
+        return None
+    document = await database["dashboard_snapshots"].find_one({"_id": "latest"})
+    return _to_serializable(document)
 
 
 async def list_products(limit: int = 100) -> list[dict[str, Any]]:
@@ -227,17 +263,38 @@ async def delete_old_reviews(product_id: str, older_than_days: int = 30) -> int:
 
 
 def build_dashboard_payload(product: dict[str, Any], reviews: list[dict[str, Any]]) -> dict[str, Any]:
-    total_reviews = len(reviews)
+    # `analyzed_reviews` = the sample we actually scraped & ran sentiment on
+    # (used as the denominator for every percentage/average below). The DISPLAY
+    # "Total Reviews" must instead show the website's own total review count.
+    analyzed_reviews = len(reviews)
+
+    def _as_int(value: Any) -> int:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+    # Website's real total review count (stored on the product doc during the
+    # scrape); fall back to total_ratings, then the analyzed sample size.
+    site_total_reviews = (
+        _as_int(product.get("total_reviews"))
+        or _as_int(product.get("total_ratings"))
+        or analyzed_reviews
+    )
+
     positive_count = sum(1 for review in reviews if str(review.get("sentiment", "")).lower() == "positive")
     negative_count = sum(1 for review in reviews if str(review.get("sentiment", "")).lower() == "negative")
     neutral_count = sum(1 for review in reviews if str(review.get("sentiment", "")).lower() == "neutral")
 
-    positive_percentage = round((positive_count / total_reviews) * 100, 2) if total_reviews else 0.0
-    negative_percentage = round((negative_count / total_reviews) * 100, 2) if total_reviews else 0.0
-    neutral_percentage = round((neutral_count / total_reviews) * 100, 2) if total_reviews else 0.0
+    positive_percentage = round((positive_count / analyzed_reviews) * 100, 2) if analyzed_reviews else 0.0
+    negative_percentage = round((negative_count / analyzed_reviews) * 100, 2) if analyzed_reviews else 0.0
+    neutral_percentage = round((neutral_count / analyzed_reviews) * 100, 2) if analyzed_reviews else 0.0
 
     rating_values = [int(review.get("rating") or 0) for review in reviews]
-    average_rating = round(sum(rating_values) / total_reviews, 2) if total_reviews else 0.0
+    review_average = round(sum(rating_values) / analyzed_reviews, 2) if analyzed_reviews else 0.0
+    # Fall back to the product's stored (site) rating when the persisted reviews
+    # carry no per-review rating, so the dashboard never shows 0 when a rating exists.
+    average_rating = review_average if review_average else round(float(product.get("rating") or 0), 2)
 
     rating_distribution = {
         "5_star": sum(1 for value in rating_values if value >= 5),
@@ -253,11 +310,37 @@ def build_dashboard_payload(product: dict[str, Any], reviews: list[dict[str, Any
         reverse=True,
     )[:5]
 
+    product_name = product.get("product_name") or product.get("name") or "Unknown Product"
+    # Headline rating falls back to the product's stored (site) rating when the
+    # persisted review sample carries no per-review ratings.
+    headline_rating = average_rating if average_rating else float(product.get("rating") or 0)
+
+    # Source Summary built from the persisted product/review data (Issue 5) so
+    # it stays populated across navigation and page refresh (Issue 3).
+    source_summary = {
+        "website": product.get("platform") or "FirstCry",
+        "platform": product.get("platform") or "firstcry",
+        "product_name": product_name,
+        "total_reviews": site_total_reviews,
+        "analyzed_reviews": analyzed_reviews,
+        "average_rating": headline_rating,
+        "positive_reviews": positive_count,
+        "neutral_reviews": neutral_count,
+        "negative_reviews": negative_count,
+        "scraping_time_seconds": product.get("scraping_time_seconds"),
+        "analysis_completed_at": product.get("updated_at"),
+        "data_source": product.get("product_url"),
+    }
+
     return {
-        "product_name": product.get("product_name") or product.get("name") or "Unknown Product",
+        "product_name": product_name,
+        "product_image": product.get("image_url") or product.get("product_image"),
+        "platform": product.get("platform") or "firstcry",
+        "product_url": product.get("product_url"),
         "rating": product.get("rating") or 0,
         "price": product.get("price") or "N/A",
-        "total_reviews": total_reviews,
+        "total_reviews": site_total_reviews,
+        "analyzed_reviews": analyzed_reviews,
         "positive_count": positive_count,
         "negative_count": negative_count,
         "neutral_count": neutral_count,
@@ -272,4 +355,5 @@ def build_dashboard_payload(product: dict[str, Any], reviews: list[dict[str, Any
             "neutral": neutral_count,
         },
         "rating_distribution": rating_distribution,
+        "source_summary": source_summary,
     }

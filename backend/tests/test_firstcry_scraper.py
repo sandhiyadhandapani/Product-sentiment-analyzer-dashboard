@@ -97,12 +97,31 @@ class FirstCryScraperTests(unittest.TestCase):
 
     @patch("scraper.firstcry_scraper._build_driver")
     def test_scrape_firstcry_reviews_returns_structured_payload(self, mock_build_driver):
+        # A realistic product page must expose the mandatory fields (name via the
+        # search-card link, image and price), otherwise the scraper correctly
+        # refuses to report success.
+        class _StubEl:
+            text = ""
+
+            def is_displayed(self):
+                return False
+
+            def is_enabled(self):
+                return False
+
+            def get_attribute(self, *_args, **_kwargs):
+                return None
+
         class DummyDriver:
             def __init__(self):
                 self.page_source = """
                 <html>
+                  <head>
+                    <meta property="og:image" content="https://example.com/product.jpg" />
+                  </head>
                   <body>
-                    <a href="/p/test-product">Product</a>
+                    <a href="/p/test-product">Baby Stroller Pram</a>
+                    <span class="price">₹499</span>
                     <div class="review-card">
                       <div class="reviewer-name">Asha</div>
                       <div class="review-rating">5</div>
@@ -124,10 +143,15 @@ class FirstCryScraperTests(unittest.TestCase):
                 return None
 
             def execute_script(self, script, *args, **kwargs):
+                # emulate document.readyState so page-ready waits resolve at once
+                if isinstance(script, str) and "readyState" in script:
+                    return "complete"
                 return None
 
             def find_elements(self, *args, **kwargs):
-                return []
+                # non-empty so the ExpectedConditions waits resolve immediately;
+                # the stub element is never "displayed" so click loops skip it.
+                return [_StubEl()]
 
             def quit(self):
                 return None
@@ -137,7 +161,7 @@ class FirstCryScraperTests(unittest.TestCase):
         result = scrape_firstcry_reviews("baby stroller", return_metadata=True)
 
         self.assertTrue(result["meta"]["success"])
-        self.assertEqual(result["meta"]["product_name"], "Product")
+        self.assertEqual(result["meta"]["product_name"], "Baby Stroller Pram")
         self.assertEqual(len(result["reviews"]), 1)
         self.assertEqual(result["reviews"][0]["reviewer_name"], "Asha")
         self.assertEqual(result["reviews"][0]["review_rating"], 5)

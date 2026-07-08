@@ -56,6 +56,9 @@ class ReviewResult(BaseModel):
     review_text: str
     rating: int
     review_rating: int | None = None
+    reviewer_name: str | None = None
+    review_date: str | None = None
+    verified_purchase: bool | None = None
     sentiment: str
     platform: str | None = None
     score: float | None = None
@@ -69,6 +72,11 @@ class AnalysisResponse(BaseModel):
     product_price: str | None = None
     product_rating: float | None = None
     total_ratings: int | None = None
+    current_price: str | None = None
+    original_price: float | None = None
+    discount_percentage: int | None = None
+    product_url: str | None = None
+    rating: float | None = None
     platform: str | None = None
     total_reviews: int
     positive: int
@@ -76,6 +84,8 @@ class AnalysisResponse(BaseModel):
     neutral: int
     reviews: list[ReviewResult]
     summary: ReviewSummary | None = None
+    source_summary: dict | None = None
+    dashboard_data: dict | None = None
     message: str | None = None
 
 

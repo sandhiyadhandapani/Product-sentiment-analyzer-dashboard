@@ -2,7 +2,10 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_BASE_URL || 'http://127.0.0.1:8000/api',
-  timeout: 30000,
+  // A live scrape legitimately takes longer than the old 30s cap, which caused
+  // premature "Network Error" timeouts. The backend enforces its own hard
+  // deadline (~50s) and always responds within this window.
+  timeout: 90000,
 });
 
 // Retry wrapper for API calls
@@ -30,8 +33,17 @@ const withRetry = async (fn, maxRetries = 3, delayMs = 1000) => {
 
 export const ANALYSIS_STORAGE_KEY = 'product-analysis-result';
 
+// Session-only flag: true once a product has been analyzed during THIS page
+// session. It lives in module memory, so it survives in-app (React Router)
+// navigation but resets to false on a full page refresh/reload. The Dashboard
+// uses it to show data only after an analysis in this session, and to go back to
+// the empty state on refresh (instead of showing the last persisted product).
+let _analyzedInSession = false;
+export const hasAnalyzedInSession = () => _analyzedInSession;
+
 export const saveAnalyzedProduct = (product) => {
   if (!product) return;
+  _analyzedInSession = true;
   try {
     localStorage.setItem(ANALYSIS_STORAGE_KEY, JSON.stringify(product));
     try {
@@ -112,8 +124,25 @@ const normalizeProduct = (product) => {
       : 'Neutral';
 
   const productName = product.product_name || product.name || product.product || 'Product';
-  const productPrice = product.product_price || product.price || product.current_price || 'N/A';
+  // Resolve ONE canonical display price so the header and the Specs tab always
+  // agree. Prefer the Original Price (MRP) exactly like ProductDetailsPage's
+  // header does; only fall back to the current price when no MRP exists. This
+  // prevents the Specs tab from showing a different (often wrong, e.g. the
+  // discount number) value than the header.
+  const formatIndianPrice = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const num = Number(value);
+    // Keep the paise: 652.86 -> ₹652.86.
+    return !Number.isNaN(num) && num > 0 ? `₹${num.toLocaleString('en-IN')}` : null;
+  };
+  const productPrice =
+    formatIndianPrice(product.current_price) ||
+    formatIndianPrice(product.original_price) ||
+    product.product_price ||
+    product.price ||
+    'N/A';
   const productRating = Number(product.product_rating ?? product.rating ?? 0);
+  console.log('[API] Frontend received product rating:', { product_rating: product.product_rating, rating: product.rating, resolved: productRating });
   const totalRatings = Number(product.total_ratings ?? product.totalRatings ?? 0);
   const totalReviews = Number(product.total_reviews ?? product.totalReviews ?? reviewCount);
 
@@ -147,7 +176,7 @@ const normalizeProduct = (product) => {
   return normalized;
 };
 
-const normalizeReview = (review, productPlatform = 'FirstCry') => {
+export const normalizeReview = (review, productPlatform = 'FirstCry') => {
   const rating = Number(review.review_rating ?? review.rating ?? 0);
   const sentiment = review.sentiment || getSentimentFromRating(rating);
   return {
@@ -189,7 +218,10 @@ export const getProduct = async (query) => {
 
 export const analyzeProduct = async (productName, platform = 'firstcry') => {
   console.log('[API] analyzeProduct called with:', { productName, platform });
-  
+
+  // Analyze triggers a heavy Selenium scrape, so it must NOT be retried: a retry
+  // would launch another full scrape and multiply latency/load. A single attempt
+  // is used; the backend handles its own retries and returns a proper message.
   return withRetry(async () => {
     try {
       console.log('[API] Making POST request to /analyze');
@@ -214,6 +246,10 @@ export const analyzeProduct = async (productName, platform = 'firstcry') => {
     } catch (error) {
       console.error('[API] analyzeProduct error:', error);
       if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          console.error('[API] Request timed out');
+          throw new Error('TIMEOUT');
+        }
         if (!error.response) {
           console.error('[API] Network error - no response');
           throw new Error('NETWORK_ERROR');
@@ -225,7 +261,7 @@ export const analyzeProduct = async (productName, platform = 'firstcry') => {
       }
       throw error;
     }
-  });
+  }, 1);
 };
 
 export const searchProducts = async (query = '', platform = 'firstcry') => {
@@ -255,7 +291,9 @@ export const searchProducts = async (query = '', platform = 'firstcry') => {
     };
   } catch (error) {
     console.error('[API] searchProducts error:', error);
-    const message = error?.message === 'NETWORK_ERROR' 
+    const message = error?.message === 'TIMEOUT'
+      ? 'Analysis is taking longer than expected. Please try again in a moment.'
+      : error?.message === 'NETWORK_ERROR'
       ? 'Network error. Please check your connection and try again.'
       : error?.message?.startsWith('HTTP_')
       ? `Server error (${error.message}). Please try again.`
@@ -265,6 +303,23 @@ export const searchProducts = async (query = '', platform = 'firstcry') => {
     console.log('[API] Returning error message:', message);
     return { products: [], message };
   }
+};
+
+// Map the raw review objects already contained in an analyzed product (from the
+// /analyze response) into the shape the Review page renders. This lets the
+// Review page reuse the EXACT reviews the Product Details page received, instead
+// of triggering a second scrape that can return a different (or empty) result.
+export const getReviewsFromProduct = (product) => {
+  if (!product) return [];
+  const platform = product.platform || product.raw?.platform || 'FirstCry';
+  const raw = Array.isArray(product.reviewItems) && product.reviewItems.length
+    ? product.reviewItems
+    : Array.isArray(product.raw?.reviews)
+    ? product.raw.reviews
+    : Array.isArray(product.reviews)
+    ? product.reviews
+    : [];
+  return raw.map((review) => normalizeReview(review, platform));
 };
 
 export const getProductReviews = async (query) => {

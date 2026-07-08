@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 const Navbar = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
-  const navigate = useNavigate();
 
   const navLinks = [
     { label: 'Home', path: '/' },
@@ -12,7 +11,7 @@ const Navbar = () => {
     { label: 'About', path: '/about' },
     { label: 'Features', path: '/features' },
     { label: 'How It Works', path: '/how-it-works' },
-    { label: 'Contact', path: '/contact' },
+    { label: 'Team', path: '/team' },
   ];
 
   return (
@@ -49,20 +48,6 @@ const Navbar = () => {
             ))}
           </div>
 
-          {/* Auth Buttons */}
-          <div className="hidden md:flex items-center gap-2">
-            <button type="button" onClick={() => navigate('/about')} className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                <circle cx="12" cy="7" r="4" />
-              </svg>
-              Login
-            </button>
-            <button type="button" onClick={() => navigate('/contact')} className="border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:border-indigo-300 hover:text-indigo-600 transition-colors">
-              Register
-            </button>
-          </div>
-
           {/* Mobile Menu */}
           <button className="md:hidden" onClick={() => setMenuOpen(!menuOpen)}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -89,12 +74,6 @@ const Navbar = () => {
               {link.label}
             </Link>
           ))}
-          <button type="button" onClick={() => navigate('/about')} className="w-full mt-2 bg-gray-900 text-white py-2 rounded-lg text-sm font-medium">
-            Login
-          </button>
-          <button type="button" onClick={() => navigate('/contact')} className="w-full border border-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium">
-            Register
-          </button>
         </div>
       )}
     </nav>

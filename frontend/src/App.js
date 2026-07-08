@@ -5,7 +5,7 @@ import DashboardPage from './pages/DashboardPage';
 import AboutPage from './pages/AboutPage';
 import FeaturesPage from './pages/FeaturesPage';
 import HowItWorksPage from './pages/HowItWorksPage';
-import ContactPage from './pages/ContactPage';
+import TeamPage from './pages/TeamPage';
 import ProductSearchPage from './pages/ProductSearchPage';
 import ProductDetailsPage from './pages/ProductDetailsPage';
 import ReviewDisplayPage from './pages/ReviewDisplayPage';
@@ -19,7 +19,8 @@ function App() {
         <Route path="/about" element={<AboutPage />} />
         <Route path="/features" element={<FeaturesPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
-        <Route path="/contact" element={<ContactPage />} />
+        <Route path="/team" element={<TeamPage />} />
+        <Route path="/contact" element={<TeamPage />} />
         <Route path="/search" element={<ProductSearchPage />} />
         <Route path="/product-details" element={<ProductDetailsPage />} />
         <Route path="/details" element={<ProductDetailsPage />} />

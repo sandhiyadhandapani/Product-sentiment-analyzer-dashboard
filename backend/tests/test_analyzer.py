@@ -1,10 +1,16 @@
 import unittest
 from unittest.mock import patch
 
+from sentiment import analyzer as analyzer_module
 from sentiment.analyzer import analyze_product
 
 
 class AnalyzeProductTests(unittest.TestCase):
+    def setUp(self):
+        # The analyzer caches results per query; clear it so each test that
+        # reuses the same product name ("iphone 15") is isolated.
+        analyzer_module._ANALYSIS_CACHE.clear()
+
     @patch("sentiment.analyzer.scrape_firstcry_reviews")
     def test_analyze_product_uses_firstcry_when_requested(self, mock_firstcry):
         mock_firstcry.return_value = {

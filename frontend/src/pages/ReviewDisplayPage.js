@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import { getProduct, getProductReviews } from '../services/api';
+import { getProduct, getProductReviews, getReviewsFromProduct, getStoredAnalyzedProduct } from '../services/api';
 
 const sentimentConfig = {
   Positive: { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0', emoji: '😊' },
@@ -65,6 +65,7 @@ const ReviewCard = ({ review }) => {
 const ReviewDisplayPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sentimentFilter, setSentimentFilter] = useState('All');
   const [sortBy, setSortBy] = useState('recent');
   const [search, setSearch] = useState('');
@@ -80,15 +81,41 @@ const ReviewDisplayPage = () => {
       console.log('[ReviewDisplayPage] Loading reviews for product:', id);
       setLoading(true);
       setError('');
+
+      // Root-cause fix (Issues 1 & 9): reuse the reviews from the product that
+      // was already analyzed on the Product Details page - passed via navigation
+      // state, or persisted in localStorage - so the Review page shows the SAME
+      // reviews and counts, instead of re-scraping (which could return 0).
+      // Decode defensively: a product name containing a literal '%' (e.g.
+      // "100% Cotton") makes the URL segment an invalid percent-encoding and
+      // decodeURIComponent would throw "URI malformed" and crash the page.
+      let decodedId = id;
       try {
-        console.log('[ReviewDisplayPage] Fetching product data...');
-        const productData = await getProduct(decodeURIComponent(id));
+        decodedId = decodeURIComponent(id);
+      } catch (decodeError) {
+        console.warn('[ReviewDisplayPage] id is not valid percent-encoding, using raw value:', id);
+        decodedId = id;
+      }
+      const sourceProduct = location.state?.product || getStoredAnalyzedProduct();
+      const preloaded = getReviewsFromProduct(sourceProduct);
+      if (sourceProduct && preloaded.length > 0) {
+        console.log('[ReviewDisplayPage] Using already-analyzed reviews:', preloaded.length);
+        setProductName(sourceProduct.name || sourceProduct.raw?.product_name || decodedId);
+        setReviews(preloaded);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        console.log('[ReviewDisplayPage] No preloaded reviews; fetching product data...');
+        const productData = await getProduct(decodedId);
         console.log('[ReviewDisplayPage] Product data received:', productData);
         setProductName(productData.name);
-        
-        console.log('[ReviewDisplayPage] Fetching review data...');
-        const reviewData = await getProductReviews(decodeURIComponent(id));
-        console.log('[ReviewDisplayPage] Review data received:', reviewData);
+
+        // Prefer the reviews contained in the freshly analyzed product so the
+        // count matches Product Details exactly.
+        const fromProduct = getReviewsFromProduct(productData);
+        const reviewData = fromProduct.length > 0 ? fromProduct : await getProductReviews(decodedId);
         console.log('[ReviewDisplayPage] Number of reviews:', reviewData.length);
         setReviews(reviewData);
       } catch (err) {
@@ -102,7 +129,7 @@ const ReviewDisplayPage = () => {
     };
 
     loadReviews();
-  }, [id]);
+  }, [id, location.state]);
 
   const filtered = reviews
     .filter((r) => sentimentFilter === 'All' || r.sentiment === sentimentFilter)
